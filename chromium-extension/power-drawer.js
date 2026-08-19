@@ -279,7 +279,7 @@
         font-size: 13px;
         font-weight: 650;
         color: #fff;
-        background: rgba(20,24,30,0.82);
+        background: rgba(181, 58, 47, 0.88);
         backdrop-filter: blur(4px);
         cursor: pointer;
       }
