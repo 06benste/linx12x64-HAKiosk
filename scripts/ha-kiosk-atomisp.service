@@ -1,0 +1,15 @@
+[Unit]
+Description=Load AtomISP camera stack for Linx kiosk
+# Must NOT use After=multi-user.target while also WantedBy=multi-user.target —
+# that creates a boot ordering cycle and systemd drops dependent units
+# (mqtt / camera-stream) as inactive (dead).
+After=local-fs.target systemd-modules-load.service
+Before=ha-kiosk-camera-stream.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/ha-kiosk/scripts/load-atomisp.sh
+
+[Install]
+WantedBy=multi-user.target

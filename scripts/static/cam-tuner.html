@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>Camera settings</title>
+  <style>
+    :root {
+      --bg: #0e1115;
+      --panel: #171b21;
+      --text: #eef1f4;
+      --muted: #9aa3ad;
+      --accent: #2f6fed;
+      --warn: #a56a1c;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, sans-serif;
+    }
+    .wrap {
+      display: grid;
+      grid-template-columns: 1.2fr 1fr;
+      gap: 12px;
+      height: 100%;
+      padding: 12px;
+    }
+    @media (max-width: 900px) {
+      .wrap { grid-template-columns: 1fr; grid-template-rows: 42vh 1fr; }
+    }
+    .preview-pane {
+      background: #000;
+      border-radius: 14px;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      min-height: 0;
+    }
+    .preview-pane img {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      transform-origin: center center;
+    }
+    .badge {
+      position: absolute;
+      left: 10px;
+      top: 10px;
+      font-size: 12px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: rgba(0,0,0,0.55);
+      color: #fff;
+    }
+    .controls {
+      background: var(--panel);
+      border-radius: 14px;
+      padding: 12px 14px 14px;
+      overflow: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-height: 0;
+    }
+    h1 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 650;
+    }
+    .sub {
+      margin: 0;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .facing {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      padding: 4px;
+      border-radius: 12px;
+      background: #10141a;
+    }
+    .facing button {
+      min-height: 44px;
+      border-radius: 10px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 650;
+    }
+    .facing button.active {
+      background: var(--accent);
+      color: #fff;
+    }
+    .facing button:disabled { opacity: 0.55; }
+    .slider {
+      display: grid;
+      gap: 4px;
+    }
+    .slider .row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+    }
+    .slider input[type=range] {
+      width: 100%;
+      height: 40px;
+      accent-color: var(--accent);
+      margin: 0;
+    }
+    .btns {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
+      margin-top: 4px;
+    }
+    .btns.embed-2 { grid-template-columns: 1fr 1fr; }
+    button {
+      appearance: none;
+      border: 0;
+      border-radius: 11px;
+      min-height: 48px;
+      font-size: 15px;
+      font-weight: 600;
+      color: #fff;
+      background: var(--accent);
+      cursor: pointer;
+    }
+    button.secondary { background: #343e4a; }
+    button.warn { background: var(--warn); }
+    button:disabled { opacity: 0.55; }
+    .status {
+      min-height: 1.2em;
+      font-size: 13px;
+      color: #e2c07a;
+    }
+    body:not(.embed) .btn-done { display: none; }
+    body.embed .btns { grid-template-columns: 1fr 1fr 1fr; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="preview-pane">
+      <span class="badge" id="badge">Live preview</span>
+      <img id="preview" alt="Camera preview" />
+    </div>
+    <div class="controls">
+      <div>
+        <h1>Camera settings</h1>
+        <p class="sub">Software look per camera. Switch front/rear, drag sliders to preview, Save writes that camera’s grade.</p>
+      </div>
+      <div class="facing" role="group" aria-label="Camera facing">
+        <button type="button" id="btn-front" data-facing="front">Front</button>
+        <button type="button" id="btn-rear" data-facing="rear">Rear</button>
+      </div>
+      <div id="sliders"></div>
+      <div class="btns" id="btn-row">
+        <button type="button" class="secondary" id="btn-reset">Reset</button>
+        <button type="button" id="btn-save">Save</button>
+        <button type="button" class="secondary btn-done" id="btn-done">Done</button>
+      </div>
+      <div class="status" id="status" aria-live="polite"></div>
+    </div>
+  </div>
+  <script>
+    const EMBED = new URLSearchParams(location.search).get("embed") === "1";
+    if (EMBED) document.body.classList.add("embed");
+
+    const FIELDS = [
+      { key: "exposure_ev", label: "Exposure (EV)", min: -1.5, max: 2.5, step: 0.05 },
+      { key: "contrast", label: "Contrast", min: 0.7, max: 1.6, step: 0.01 },
+      { key: "saturation", label: "Saturation", min: 0.5, max: 1.8, step: 0.01 },
+      { key: "wb_r", label: "White balance R", min: 0.7, max: 1.8, step: 0.01 },
+      { key: "wb_g", label: "White balance G", min: 0.7, max: 1.5, step: 0.01 },
+      { key: "wb_b", label: "White balance B", min: 0.7, max: 1.8, step: 0.01 },
+      { key: "shadows", label: "Shadows", min: 0, max: 0.7, step: 0.01 },
+      { key: "highlights", label: "Highlights", min: 0, max: 0.5, step: 0.01 },
+    ];
+
+    const DEFAULTS = {
+      exposure_ev: 0.0,
+      contrast: 1.0,
+      saturation: 1.0,
+      wb_r: 1.0,
+      wb_g: 1.0,
+      wb_b: 1.0,
+      shadows: 0.0,
+      highlights: 0.0,
+    };
+
+    let facing = "front";
+    let base = { ...DEFAULTS };
+    let look = { ...DEFAULTS };
+    let busy = false;
+    const els = {};
+    const preview = document.getElementById("preview");
+    const statusEl = document.getElementById("status");
+    const sliders = document.getElementById("sliders");
+    const badge = document.getElementById("badge");
+    const btnFront = document.getElementById("btn-front");
+    const btnRear = document.getElementById("btn-rear");
+
+    function refreshPreview() {
+      preview.style.filter = "none";
+      preview.src = "/stream.mjpg?t=" + Date.now();
+      applyPreviewCss();
+    }
+
+    function fmt(key, v) {
+      return Number(v).toFixed(2);
+    }
+
+    function facingLabel(name) {
+      return name === "rear" ? "Rear" : "Front";
+    }
+
+    function updateFacingUi() {
+      btnFront.classList.toggle("active", facing === "front");
+      btnRear.classList.toggle("active", facing === "rear");
+      badge.textContent = facingLabel(facing) + " · Live preview";
+    }
+
+    function setBusy(on) {
+      busy = on;
+      btnFront.disabled = on;
+      btnRear.disabled = on;
+      document.getElementById("btn-save").disabled = on;
+      document.getElementById("btn-reset").disabled = on;
+    }
+
+    function buildSliders() {
+      sliders.innerHTML = "";
+      for (const f of FIELDS) {
+        const wrap = document.createElement("div");
+        wrap.className = "slider";
+        wrap.innerHTML =
+          `<div class="row"><span>${f.label}</span><span data-val="${f.key}">${fmt(f.key, look[f.key])}</span></div>` +
+          `<input type="range" data-key="${f.key}" min="${f.min}" max="${f.max}" step="${f.step}" value="${look[f.key]}" />`;
+        sliders.appendChild(wrap);
+        const input = wrap.querySelector("input");
+        els[f.key] = { input, label: wrap.querySelector(`[data-val="${f.key}"]`) };
+        input.addEventListener("input", () => {
+          look[f.key] = Number(input.value);
+          els[f.key].label.textContent = fmt(f.key, look[f.key]);
+          applyPreviewCss();
+        });
+      }
+    }
+
+    function applyPreviewCss() {
+      // Live stream is already graded with `base`. Preview CSS applies only the delta.
+      const dEv = Number(look.exposure_ev) - Number(base.exposure_ev);
+      const dContrast = Number(look.contrast) / Math.max(0.01, Number(base.contrast));
+      const dSat = Number(look.saturation) / Math.max(0.01, Number(base.saturation));
+      const dShadows = Number(look.shadows) - Number(base.shadows);
+      const wr = Number(look.wb_r) / Math.max(0.01, Number(base.wb_r));
+      const wb = Number(look.wb_b) / Math.max(0.01, Number(base.wb_b));
+      const hue = Math.max(-18, Math.min(18, (wr - wb) * 20));
+      const bright = Math.pow(2, dEv) * (1 + dShadows * 0.35);
+      preview.style.filter = [
+        `brightness(${bright.toFixed(3)})`,
+        `contrast(${dContrast.toFixed(3)})`,
+        `saturate(${dSat.toFixed(3)})`,
+        `hue-rotate(${hue.toFixed(1)}deg)`,
+      ].join(" ");
+    }
+
+    function setStatus(msg) {
+      statusEl.textContent = msg || "";
+    }
+
+    function applyLookPayload(sp) {
+      look = { ...DEFAULTS, ...(sp || {}) };
+      base = { ...look };
+      buildSliders();
+      applyPreviewCss();
+    }
+
+    async function loadFacingState() {
+      const res = await fetch("/api/input", { cache: "no-store" });
+      const data = await res.json();
+      if (!res.ok || data.ok === false) throw new Error(data.error || "input load failed");
+      facing = data.facing === "rear" ? "rear" : "front";
+      updateFacingUi();
+      return data;
+    }
+
+    async function loadLook() {
+      const res = await fetch("/api/look?facing=" + encodeURIComponent(facing), { cache: "no-store" });
+      const data = await res.json();
+      if (!res.ok || data.ok === false) throw new Error(data.error || "load failed");
+      if (data.facing === "front" || data.facing === "rear") facing = data.facing;
+      updateFacingUi();
+      applyLookPayload(data.software_preview);
+      setStatus("Loaded " + facingLabel(facing).toLowerCase() + " look");
+    }
+
+    async function setFacing(next) {
+      if (busy || next === facing) return;
+      setBusy(true);
+      setStatus("Switching to " + facingLabel(next).toLowerCase() + "…");
+      try {
+        const res = await fetch("/api/input", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ facing: next }),
+        });
+        const data = await res.json();
+        if (!res.ok || data.ok === false) throw new Error(data.error || "switch failed");
+        facing = data.facing === "rear" ? "rear" : "front";
+        updateFacingUi();
+        if (data.look) {
+          applyLookPayload(data.look);
+        } else {
+          await loadLook();
+        }
+        setStatus(facingLabel(facing) + " camera active");
+        // Stream restarts in ~0.3–0.8s now; poll briefly then refresh.
+        const waitMs = data.restarted ? Math.min(900, Math.max(250, (data.elapsed_ms || 400) + 150)) : 100;
+        setTimeout(refreshPreview, waitMs);
+      } catch (err) {
+        setStatus(String(err.message || err));
+        updateFacingUi();
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    async function saveLook() {
+      setBusy(true);
+      setStatus("Saving " + facingLabel(facing).toLowerCase() + "…");
+      try {
+        const res = await fetch("/api/look", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ software_preview: look, facing }),
+        });
+        const data = await res.json();
+        if (!res.ok || data.ok === false) throw new Error(data.error || "save failed");
+        base = { ...look };
+        setStatus("Saved " + facingLabel(facing).toLowerCase() + " — stream reloading");
+        setTimeout(refreshPreview, 1200);
+      } catch (err) {
+        setStatus(String(err.message || err));
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    function resetLook() {
+      look = { ...DEFAULTS };
+      buildSliders();
+      applyPreviewCss();
+      setStatus("Reset to neutral for " + facingLabel(facing).toLowerCase() + " (not saved yet)");
+    }
+
+    function done() {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({ type: "ha-kiosk-tuner-done" }, "*");
+      } else {
+        window.close();
+      }
+    }
+
+    btnFront.addEventListener("click", () => setFacing("front"));
+    btnRear.addEventListener("click", () => setFacing("rear"));
+    document.getElementById("btn-reset").addEventListener("click", resetLook);
+    document.getElementById("btn-save").addEventListener("click", saveLook);
+    document.getElementById("btn-done").addEventListener("click", done);
+
+    (async () => {
+      try {
+        await loadFacingState();
+        await loadLook();
+        refreshPreview();
+      } catch (err) {
+        setStatus(String(err.message || err));
+        refreshPreview();
+      }
+    })();
+  </script>
+</body>
+</html>

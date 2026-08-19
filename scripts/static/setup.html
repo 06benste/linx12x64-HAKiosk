@@ -1,0 +1,1470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>HA Kiosk Setup</title>
+  <style>
+    :root {
+      --bg: #0e1115;
+      --panel: #171b21;
+      --text: #eef1f4;
+      --muted: #9aa3ad;
+      --accent: #2f6fed;
+      --warn: #a56a1c;
+      --danger: #b53a2f;
+      --ok: #3dbe7a;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, sans-serif;
+    }
+    .wrap {
+      max-width: 560px;
+      margin: 0 auto;
+      padding: 28px 18px 40px;
+    }
+    /* Top clearance for the drawer's fixed "Exit to kiosk screen" button
+       (power-drawer.js's .overlay-close — top:10px, ~40px tall) sitting
+       above this iframe's own content — without it, the tab bar's
+       rightmost button sits directly underneath and the two overlap. */
+    body.embed .wrap { padding: 58px 14px 14px; max-width: none; }
+    h1 {
+      margin: 0 0 4px;
+      font-size: 22px;
+      font-weight: 700;
+    }
+    body.embed h1 { display: none; }
+    .sub {
+      margin: 0 0 20px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    body.embed .sub { display: none; }
+    .tabs {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 6px;
+      padding: 4px;
+      border-radius: 12px;
+      background: #10141a;
+      margin-bottom: 16px;
+    }
+    .tabs button {
+      appearance: none;
+      border: 0;
+      min-height: 44px;
+      border-radius: 9px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 650;
+      cursor: pointer;
+      line-height: 1.2;
+      padding: 4px 2px;
+      transition: background 0.15s ease, color 0.15s ease;
+    }
+    .tabs button.active { background: var(--accent); color: #fff; }
+    .tabs button:active { filter: brightness(0.94); }
+    .panel {
+      background: var(--panel);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 14px;
+      padding: 16px;
+      display: none;
+      flex-direction: column;
+      gap: 12px;
+      animation: panel-in 0.16s ease;
+    }
+    .panel.active { display: flex; }
+    @keyframes panel-in {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .section-heading {
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin: 4px 0 -2px;
+    }
+    .section-heading:first-child { margin-top: 0; }
+    label { font-size: 13px; font-weight: 600; display: block; margin-bottom: 6px; }
+    .field { display: flex; flex-direction: column; }
+    input[type=text], input[type=password], input[type=url] {
+      appearance: none;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: #10141a;
+      color: var(--text);
+      border-radius: 10px;
+      padding: 12px 14px;
+      font-size: 18px;
+      min-height: 52px;
+    }
+    input:focus { outline: 2px solid var(--accent); }
+    .hint { font-size: 12px; color: var(--muted); margin-top: 5px; }
+    .row-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .stack { display: grid; gap: 8px; }
+    button.btn {
+      appearance: none;
+      border: 0;
+      border-radius: 11px;
+      min-height: 48px;
+      padding: 10px 12px;
+      font-size: 15px;
+      font-weight: 650;
+      color: #fff;
+      background: var(--accent);
+      cursor: pointer;
+      transition: transform 0.1s ease, filter 0.15s ease;
+    }
+    button.btn.secondary { background: #343e4a; }
+    button.btn.warn { background: var(--warn); }
+    button.btn:active:not(:disabled) { transform: scale(0.97); filter: brightness(0.92); }
+    button.btn:disabled { opacity: 0.55; cursor: wait; }
+    .status { min-height: 1.3em; font-size: 13px; color: #e2c07a; }
+    .status.ok { color: var(--ok); }
+    .status.bad { color: #ffb0a8; }
+    details.help {
+      border-top: 1px solid rgba(255,255,255,0.08);
+      margin-top: 4px;
+      padding-top: 8px;
+    }
+    details.help > summary {
+      list-style: none;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 650;
+      color: var(--muted);
+      padding: 4px 2px;
+      user-select: none;
+    }
+    details.help > summary::-webkit-details-marker { display: none; }
+    details.help > summary::after { content: " ▾"; }
+    details.help[open] > summary::after { content: " ▴"; }
+    details.help .body { font-size: 13px; line-height: 1.5; color: var(--muted); padding: 8px 2px 2px; }
+    details.help .body h4 { color: var(--text); margin: 12px 0 4px; font-size: 13px; }
+    details.help .body h4:first-child { margin-top: 0; }
+    details.help .body pre {
+      background: #10141a;
+      border-radius: 8px;
+      padding: 10px;
+      overflow-x: auto;
+      font-size: 12px;
+      color: #cfe0ff;
+      white-space: pre-wrap;
+    }
+    .wifi-current {
+      background: #10141a;
+      border-radius: 10px;
+      padding: 12px 14px;
+      font-size: 13px;
+      line-height: 1.5;
+      display: grid;
+      gap: 4px;
+    }
+    .wifi-current .primary {
+      font-size: 14.5px;
+      font-weight: 650;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .wifi-current .primary .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--ok);
+      flex: none;
+    }
+    .wifi-current .primary .dot.off { background: #565f6a; }
+    .wifi-current .primary .dot.warn { background: var(--warn); }
+    .wifi-current .meta { color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 12px; }
+    .wifi-list { display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow-y: auto; }
+    .wifi-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      background: #10141a;
+      border-radius: 10px;
+      padding: 12px 14px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    .wifi-item.active { outline: 2px solid var(--accent); }
+    .wifi-item .meta { color: var(--muted); font-size: 12px; white-space: nowrap; }
+    .connect-box { display: none; flex-direction: column; gap: 10px; }
+    .connect-box.open { display: flex; }
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #10141a;
+      border-radius: 10px;
+      padding: 12px 14px;
+    }
+    .toggle-row label { margin: 0; }
+    .switch { position: relative; display: inline-block; width: 46px; height: 28px; flex: none; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .switch .slider {
+      position: absolute; inset: 0; cursor: pointer;
+      background: #343e4a; border-radius: 999px; transition: background 0.15s;
+    }
+    .switch .slider::before {
+      content: ""; position: absolute; height: 22px; width: 22px; left: 3px; top: 3px;
+      background: #fff; border-radius: 50%; transition: transform 0.15s;
+    }
+    .switch input:checked + .slider { background: var(--accent); }
+    .switch input:checked + .slider::before { transform: translateX(18px); }
+    .cam-live {
+      display: none;
+      grid-template-columns: 1.1fr 1fr;
+      gap: 16px;
+      align-items: start;
+    }
+    .cam-controls {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-width: 0;
+    }
+    @media (max-width: 640px) {
+      .cam-live { grid-template-columns: 1fr; }
+    }
+    .cam-preview {
+      background: #000;
+      border-radius: 12px;
+      overflow: hidden;
+      aspect-ratio: 4 / 3;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+    .cam-preview img { max-width: 100%; max-height: 100%; object-fit: contain; }
+    .cam-badge {
+      position: absolute; left: 10px; top: 10px; font-size: 11px;
+      padding: 3px 8px; border-radius: 999px; background: rgba(0,0,0,0.55); color: #fff;
+    }
+    .facing {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      padding: 4px;
+      border-radius: 12px;
+      background: #10141a;
+    }
+    .facing button {
+      appearance: none;
+      border: 0;
+      min-height: 44px;
+      border-radius: 10px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 650;
+      cursor: pointer;
+    }
+    .facing button.active { background: var(--accent); color: #fff; }
+    .facing button:disabled { opacity: 0.55; }
+    .cam-slider { display: grid; gap: 4px; }
+    .cam-slider .row { display: flex; justify-content: space-between; font-size: 13px; }
+    .cam-slider input[type=range] { width: 100%; height: 40px; accent-color: var(--accent); margin: 0; }
+    .cam-offline {
+      text-align: center;
+      padding: 22px 10px;
+      color: var(--muted);
+      font-size: 13.5px;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Set up this tablet</h1>
+    <p class="sub">Connect it to your Home Assistant dashboard. You can change this any time from the tablet's control drawer.</p>
+
+    <div class="tabs">
+      <button type="button" id="tab-ha" class="active">Home Assistant</button>
+      <button type="button" id="tab-wifi">Wi-Fi</button>
+      <button type="button" id="tab-mqtt">MQTT</button>
+      <button type="button" id="tab-camera">Cameras</button>
+      <button type="button" id="tab-general">General</button>
+      <button type="button" id="tab-updates">Updates</button>
+    </div>
+
+    <div class="panel active" id="panel-ha">
+      <div class="field">
+        <label for="ha-base">Home Assistant URL</label>
+        <input id="ha-base" type="url" placeholder="http://homeassistant.local:8123" autocomplete="off" />
+        <div class="hint">Where your Home Assistant lives, including <code>http://</code> — no dashboard path yet.</div>
+      </div>
+      <div class="field">
+        <label for="ha-path">Dashboard <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
+        <input id="ha-path" type="text" placeholder="/dashboard-kiosk" autocomplete="off" />
+        <div class="hint">Which page this tablet should show. Leave blank for your default dashboard, or type a path like <code>/dashboard-kiosk</code> or <code>/lovelace/0</code> — see help below for how to find one.</div>
+      </div>
+      <div class="field">
+        <label>Full URL</label>
+        <div class="hint" id="ha-url-preview" style="font-size:13px;color:var(--text);word-break:break-all;">—</div>
+      </div>
+      <div class="field">
+        <label for="ha-user">Username <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
+        <input id="ha-user" type="text" autocomplete="off" />
+      </div>
+      <div class="field">
+        <label for="ha-pass">Password <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
+        <input id="ha-pass" type="password" autocomplete="off" />
+        <div class="hint">Leave both blank if you're using Trusted Networks — see help below.</div>
+      </div>
+      <div class="row-btns">
+        <button type="button" class="btn secondary" id="btn-test">Test connection</button>
+        <button type="button" class="btn" id="btn-save">Save &amp; continue</button>
+      </div>
+      <div class="status" id="ha-status" aria-live="polite"></div>
+
+      <details class="help">
+        <summary>Setting up Home Assistant</summary>
+        <div class="body">
+          <h4>Find your Home Assistant URL</h4>
+          <p>Open Home Assistant on a computer/phone and copy the address bar (just the part before any <code>/lovelace/...</code>), or check Settings → System → Network. It usually looks like <code>http://homeassistant.local:8123</code> or <code>http://192.168.x.x:8123</code>.</p>
+
+          <h4>Which dashboard should this tablet show?</h4>
+          <p>Leave the Dashboard field blank to use whatever your default dashboard is. To show a specific one instead, open it on a computer/phone first and copy everything in the address bar <em>after</em> the port number — e.g. for a dashboard you created with URL path "kiosk" that's usually <code>/kiosk</code>; Home Assistant's auto-generated default dashboard is typically <code>/lovelace/0</code>.</p>
+
+          <h4>Use a dedicated tablet account</h4>
+          <p>Create a separate, non-admin user for this tablet: <strong>Settings → People → Add Person</strong>, and leave "Administrator" unchecked. If you fill in Username/Password above, that password is stored in plain text on the tablet — don't use your main admin account.</p>
+
+          <h4>Or skip passwords: Trusted Networks</h4>
+          <p>Leave Username/Password blank and add this to Home Assistant's <code>configuration.yaml</code> instead (replace the IP range and user ID with your own):</p>
+          <pre>homeassistant:
+  auth_providers:
+    - type: trusted_networks
+      trusted_networks:
+        - 192.168.8.0/24
+      trusted_users:
+        192.168.8.0/24: KIOSK_USER_ID
+      allow_bypass_login: true
+    - type: homeassistant</pre>
+          <p>Find the user ID under Settings → People → your tablet user, then restart Home Assistant.</p>
+
+          <h4>Hiding the sidebar</h4>
+          <p>Install the HACS "Kiosk Mode" module on the Home Assistant side and this tablet will hide the sidebar/header automatically — no need to add <code>?kiosk</code> to the URL above, that's handled for you.</p>
+        </div>
+      </details>
+    </div>
+
+    <div class="panel" id="panel-wifi">
+      <div class="wifi-current" id="wifi-current">
+        <div class="meta">Loading…</div>
+      </div>
+      <div class="row-btns" style="grid-template-columns:1fr">
+        <button type="button" class="btn secondary" id="btn-scan">Scan for networks</button>
+      </div>
+      <div class="wifi-list" id="wifi-list"></div>
+      <div class="connect-box" id="connect-box">
+        <div class="field">
+          <label id="connect-label" for="wifi-pass">Password</label>
+          <input id="wifi-pass" type="password" autocomplete="off" />
+        </div>
+        <button type="button" class="btn" id="btn-connect">Connect</button>
+      </div>
+      <div class="status" id="wifi-status" aria-live="polite"></div>
+    </div>
+
+    <div class="panel" id="panel-mqtt">
+      <div class="toggle-row">
+        <label for="mqtt-enabled">Publish this tablet to Home Assistant via MQTT</label>
+        <label class="switch">
+          <input type="checkbox" id="mqtt-enabled" />
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="field">
+        <label for="mqtt-host">Broker host</label>
+        <input id="mqtt-host" type="text" placeholder="homeassistant.local or 192.168.x.x" autocomplete="off" />
+        <div class="hint">Usually the same machine as Home Assistant, if you're using the Mosquitto broker add-on.</div>
+      </div>
+      <div class="field">
+        <label for="mqtt-port">Port</label>
+        <input id="mqtt-port" type="text" placeholder="1883" autocomplete="off" />
+      </div>
+      <div class="field">
+        <label for="mqtt-user">Username</label>
+        <input id="mqtt-user" type="text" autocomplete="off" />
+      </div>
+      <div class="field">
+        <label for="mqtt-pass">Password</label>
+        <input id="mqtt-pass" type="password" autocomplete="off" />
+      </div>
+      <div class="row-btns">
+        <button type="button" class="btn secondary" id="btn-mqtt-test">Test connection</button>
+        <button type="button" class="btn" id="btn-mqtt-save">Save</button>
+      </div>
+      <div class="status" id="mqtt-status" aria-live="polite"></div>
+
+      <details class="help">
+        <summary>Setting up MQTT</summary>
+        <div class="body">
+          <h4>Get a broker</h4>
+          <p>In Home Assistant: <strong>Settings → Add-ons → Add-on Store</strong>, install "Mosquitto broker", start it. It runs on the same machine as Home Assistant, port <code>1883</code> by default.</p>
+          <h4>Create a user for this tablet</h4>
+          <p><strong>Settings → People → Users → Add user</strong> (or the Mosquitto add-on's own config, depending on setup). Use that username/password here — don't reuse your HA admin login.</p>
+          <h4>What this adds</h4>
+          <p>Once enabled, this tablet appears as a device in HA with battery/power sensors, brightness/rotation controls, and (if the camera is set up) a live snapshot — all auto-discovered, no YAML needed.</p>
+          <h4>Turning it off</h4>
+          <p>Flip the switch above off and Save — the tablet stops publishing and its background service is disabled, without losing the saved credentials.</p>
+        </div>
+      </details>
+    </div>
+
+    <div class="panel" id="panel-camera">
+      <div id="camera-live" class="cam-live">
+        <div class="cam-preview">
+          <span class="cam-badge" id="cam-badge">Live preview</span>
+          <img id="cam-preview-img" alt="Camera preview" />
+        </div>
+        <div class="cam-controls">
+          <div class="facing" role="group" aria-label="Camera facing">
+            <button type="button" id="cam-btn-front" data-facing="front">Front</button>
+            <button type="button" id="cam-btn-rear" data-facing="rear">Rear</button>
+          </div>
+          <div id="cam-sliders"></div>
+          <div class="row-btns">
+            <button type="button" class="btn secondary" id="cam-btn-reset">Reset</button>
+            <button type="button" class="btn" id="cam-btn-save">Save</button>
+          </div>
+        </div>
+      </div>
+      <div class="cam-offline" id="camera-offline">Loading…</div>
+      <button type="button" class="btn secondary" id="cam-btn-goto-general" style="display:none">Go to General to turn it on</button>
+      <div class="status" id="camera-status" aria-live="polite"></div>
+    </div>
+
+    <div class="panel" id="panel-general">
+      <div class="section-heading">Camera</div>
+      <div class="toggle-row">
+        <label for="camera-power">Camera power</label>
+        <label class="switch">
+          <input type="checkbox" id="camera-power" />
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="hint">Fully stops the camera — no image is served anywhere, including MQTT, while off. Facing and image tuning live on the Cameras tab.</div>
+
+      <div class="section-heading">Charging</div>
+      <div class="toggle-row">
+        <label for="chgled-power">Charge LED</label>
+        <label class="switch">
+          <input type="checkbox" id="chgled-power" />
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="hint">The small indicator LED that lights up while charging. Purely cosmetic — turning it off has no effect on charging itself.</div>
+
+      <div class="section-heading">Orientation</div>
+      <div class="toggle-row">
+        <label for="auto-rotate">Auto-rotate</label>
+        <label class="switch">
+          <input type="checkbox" id="auto-rotate" />
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="hint">Follows the tablet's onboard accelerometer and rotates the display to match how it's physically mounted.</div>
+      <div id="manual-rotate-group">
+        <label style="margin-top:2px">Manual orientation</label>
+        <div class="facing" role="group" aria-label="Orientation">
+          <button type="button" class="btn-rotate" data-rotate="normal">Landscape</button>
+          <button type="button" class="btn-rotate" data-rotate="inverted">Flip</button>
+        </div>
+        <div class="facing" role="group" aria-label="Orientation" style="margin-top:6px">
+          <button type="button" class="btn-rotate" data-rotate="left">Portrait ←</button>
+          <button type="button" class="btn-rotate" data-rotate="right">Portrait →</button>
+        </div>
+      </div>
+      <div class="hint" id="manual-rotate-hidden-hint" style="display:none">Manual orientation is hidden while auto-rotate is on — turn auto-rotate off to set it by hand.</div>
+
+      <div class="status" id="general-status" aria-live="polite"></div>
+    </div>
+
+    <div class="panel" id="panel-updates">
+      <div class="section-heading">Kiosk software</div>
+      <div class="wifi-current" id="update-version-info">
+        <div class="meta">Loading…</div>
+      </div>
+      <div class="row-btns" style="grid-template-columns:1fr">
+        <button type="button" class="btn secondary" id="btn-update-check">Check for updates</button>
+      </div>
+      <div id="update-available-box" style="display:none">
+        <div class="hint" id="update-notes"></div>
+        <div class="toggle-row">
+          <label for="update-include-camera">Also rebuild the camera driver</label>
+          <label class="switch">
+            <input type="checkbox" id="update-include-camera" />
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="hint">Slower, and briefly interrupts the camera stream. Only turn this on if the release notes mention a camera fix.</div>
+        <button type="button" class="btn" id="btn-update-apply">Update now</button>
+      </div>
+      <div class="status" id="update-progress" aria-live="polite"></div>
+
+      <div class="section-heading">Debian system updates</div>
+      <div class="wifi-current" id="os-update-info">
+        <div class="meta">Loading…</div>
+      </div>
+      <div class="row-btns" style="grid-template-columns:1fr">
+        <button type="button" class="btn secondary" id="btn-os-update-check">Check for Debian updates</button>
+      </div>
+      <div id="os-update-available-box" style="display:none">
+        <div class="hint">Upgrades already-installed packages only — nothing is removed or newly added. May include a kernel update.</div>
+        <button type="button" class="btn warn" id="btn-os-update-apply">Update Debian packages</button>
+      </div>
+      <div id="os-reboot-banner" class="hint" style="display:none;color:var(--warn)">A reboot is recommended to finish applying these updates.</div>
+      <button type="button" class="btn secondary" id="btn-os-update-reboot" style="display:none">Restart tablet now</button>
+      <div class="status" id="os-update-progress" aria-live="polite"></div>
+    </div>
+  </div>
+
+  <script>
+    const params = new URLSearchParams(location.search);
+    const EMBED = params.get("embed") === "1";
+    if (EMBED) document.body.classList.add("embed");
+    const SECTION = ["wifi", "mqtt", "camera", "general", "updates"].includes(params.get("section")) ? params.get("section") : "ha";
+
+    const tabHa = document.getElementById("tab-ha");
+    const tabWifi = document.getElementById("tab-wifi");
+    const tabMqtt = document.getElementById("tab-mqtt");
+    const tabCamera = document.getElementById("tab-camera");
+    const tabGeneral = document.getElementById("tab-general");
+    const tabUpdates = document.getElementById("tab-updates");
+    const panelHa = document.getElementById("panel-ha");
+    const panelWifi = document.getElementById("panel-wifi");
+    const panelMqtt = document.getElementById("panel-mqtt");
+    const panelCamera = document.getElementById("panel-camera");
+    const panelGeneral = document.getElementById("panel-general");
+    const panelUpdates = document.getElementById("panel-updates");
+
+    // ---- Cameras tab ----
+    // Declared up here, before showTab()/showTab(SECTION) below, because
+    // the initial showTab(SECTION) call runs synchronously as soon as the
+    // script executes — if these consts were declared further down (as they
+    // originally were, in tab-source-order after Home Assistant/Wi-Fi/MQTT),
+    // that first showTab() call would reach into them while they're still in
+    // their temporal dead zone and throw "Cannot access before
+    // initialization", which aborts the rest of this <script> block
+    // entirely — silently breaking every tab, including ones already working
+    // (confirmed with a jsdom trace: this is exactly why the Cameras tab was
+    // stuck on its static "Loading…" placeholder — the script died before
+    // ever reaching camRefreshPowerState).
+    //
+    // Talks directly to camera-stream-server.py (17824, cross-origin — it
+    // sends permissive CORS headers) for the live preview/facing/look, and
+    // to power-api.py (17823) for on/off. Unlike the old standalone
+    // /tuner page (which lived inside camera-stream-server.py itself and so
+    // vanished along with it while the camera was off), the power toggle
+    // here always works because power-api never stops.
+    const CAM_BASE = "http://127.0.0.1:17824";
+    const CAM_POWER_BASE = "http://127.0.0.1:17823";
+    const camPowerToggle = document.getElementById("camera-power");
+    const camLive = document.getElementById("camera-live");
+    const camOffline = document.getElementById("camera-offline");
+    const camStatus = document.getElementById("camera-status");
+    const camPreviewImg = document.getElementById("cam-preview-img");
+    const camBadge = document.getElementById("cam-badge");
+    const camBtnFront = document.getElementById("cam-btn-front");
+    const camBtnRear = document.getElementById("cam-btn-rear");
+    const camSlidersEl = document.getElementById("cam-sliders");
+    const camBtnReset = document.getElementById("cam-btn-reset");
+    const camBtnSave = document.getElementById("cam-btn-save");
+    const camBtnGotoGeneral = document.getElementById("cam-btn-goto-general");
+    camBtnGotoGeneral.addEventListener("click", () => showTab("general"));
+
+    const CAM_FIELDS = [
+      { key: "exposure_ev", label: "Exposure (EV)", min: -1.5, max: 2.5, step: 0.05 },
+      { key: "contrast", label: "Contrast", min: 0.7, max: 1.6, step: 0.01 },
+      { key: "saturation", label: "Saturation", min: 0.5, max: 1.8, step: 0.01 },
+      { key: "wb_r", label: "White balance R", min: 0.7, max: 1.8, step: 0.01 },
+      { key: "wb_g", label: "White balance G", min: 0.7, max: 1.5, step: 0.01 },
+      { key: "wb_b", label: "White balance B", min: 0.7, max: 1.8, step: 0.01 },
+      { key: "shadows", label: "Shadows", min: 0, max: 0.7, step: 0.01 },
+      { key: "highlights", label: "Highlights", min: 0, max: 0.5, step: 0.01 },
+    ];
+    const CAM_DEFAULTS = {
+      exposure_ev: 0.0, contrast: 1.0, saturation: 1.0,
+      wb_r: 1.0, wb_g: 1.0, wb_b: 1.0, shadows: 0.0, highlights: 0.0,
+    };
+
+    let camFacing = "front";
+    let camLook = { ...CAM_DEFAULTS };
+    let camBusy = false;
+    const camEls = {};
+
+    function camFmt(v) { return Number(v).toFixed(2); }
+    function camFacingLabel(name) { return name === "rear" ? "Rear" : "Front"; }
+
+    function camUpdateFacingUi() {
+      camBtnFront.classList.toggle("active", camFacing === "front");
+      camBtnRear.classList.toggle("active", camFacing === "rear");
+      camBadge.textContent = camFacingLabel(camFacing) + " · Live preview";
+    }
+
+    function camBuildSliders() {
+      camSlidersEl.innerHTML = "";
+      for (const f of CAM_FIELDS) {
+        const wrap = document.createElement("div");
+        wrap.className = "cam-slider";
+        wrap.innerHTML =
+          `<div class="row"><span>${f.label}</span><span data-val="${f.key}">${camFmt(camLook[f.key])}</span></div>` +
+          `<input type="range" data-key="${f.key}" min="${f.min}" max="${f.max}" step="${f.step}" value="${camLook[f.key]}" />`;
+        camSlidersEl.appendChild(wrap);
+        const input = wrap.querySelector("input");
+        camEls[f.key] = { input, label: wrap.querySelector(`[data-val="${f.key}"]`) };
+        input.addEventListener("input", () => {
+          camLook[f.key] = Number(input.value);
+          camEls[f.key].label.textContent = camFmt(camLook[f.key]);
+        });
+      }
+    }
+
+    function camRefreshPreview() {
+      camPreviewImg.src = CAM_BASE + "/stream.mjpg?t=" + Date.now();
+    }
+
+    function camStopPreview() {
+      camPreviewImg.src = "";
+    }
+
+    async function camCheckReachable() {
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 4000);
+      try {
+        const res = await fetch(CAM_BASE + "/health", { cache: "no-store", signal: ctl.signal });
+        return res.ok;
+      } catch (_) {
+        return false;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    async function camLoadFacingState() {
+      const res = await fetch(CAM_BASE + "/api/input", { cache: "no-store" });
+      const data = await res.json();
+      if (!res.ok || data.ok === false) throw new Error(data.error || "input load failed");
+      camFacing = data.facing === "rear" ? "rear" : "front";
+      camUpdateFacingUi();
+    }
+
+    function camApplyLookPayload(sp) {
+      camLook = { ...CAM_DEFAULTS, ...(sp || {}) };
+      camBuildSliders();
+    }
+
+    async function camLoadLook() {
+      const res = await fetch(CAM_BASE + "/api/look?facing=" + encodeURIComponent(camFacing), { cache: "no-store" });
+      const data = await res.json();
+      if (!res.ok || data.ok === false) throw new Error(data.error || "load failed");
+      if (data.facing === "front" || data.facing === "rear") camFacing = data.facing;
+      camUpdateFacingUi();
+      camApplyLookPayload(data.software_preview);
+    }
+
+    function camSetBusy(on) {
+      camBusy = on;
+      camBtnFront.disabled = on;
+      camBtnRear.disabled = on;
+      camBtnSave.disabled = on;
+      camBtnReset.disabled = on;
+    }
+
+    async function camSetFacing(next) {
+      if (camBusy || next === camFacing) return;
+      camSetBusy(true);
+      setStatus(camStatus, "Switching to " + camFacingLabel(next).toLowerCase() + "…");
+      try {
+        const res = await fetch(CAM_BASE + "/api/input", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ facing: next }),
+        });
+        const data = await res.json();
+        if (!res.ok || data.ok === false) throw new Error(data.error || "switch failed");
+        camFacing = data.facing === "rear" ? "rear" : "front";
+        camUpdateFacingUi();
+        if (data.look) camApplyLookPayload(data.look); else await camLoadLook();
+        setStatus(camStatus, camFacingLabel(camFacing) + " camera active");
+        const waitMs = data.restarted ? Math.min(900, Math.max(250, (data.elapsed_ms || 400) + 150)) : 100;
+        setTimeout(camRefreshPreview, waitMs);
+      } catch (err) {
+        setStatus(camStatus, String(err.message || err), "bad");
+        camUpdateFacingUi();
+      } finally {
+        camSetBusy(false);
+      }
+    }
+
+    async function camSaveLook() {
+      camSetBusy(true);
+      setStatus(camStatus, "Saving " + camFacingLabel(camFacing).toLowerCase() + "…");
+      try {
+        const res = await fetch(CAM_BASE + "/api/look", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ software_preview: camLook, facing: camFacing }),
+        });
+        const data = await res.json();
+        if (!res.ok || data.ok === false) throw new Error(data.error || "save failed");
+        setStatus(camStatus, "Saved " + camFacingLabel(camFacing).toLowerCase() + " — stream reloading", "ok");
+        setTimeout(camRefreshPreview, 1200);
+      } catch (err) {
+        setStatus(camStatus, String(err.message || err), "bad");
+      } finally {
+        camSetBusy(false);
+      }
+    }
+
+    function camResetLook() {
+      camLook = { ...CAM_DEFAULTS };
+      camBuildSliders();
+      setStatus(camStatus, "Reset to neutral for " + camFacingLabel(camFacing).toLowerCase() + " (not saved yet)");
+    }
+
+    camBtnFront.addEventListener("click", () => camSetFacing("front"));
+    camBtnRear.addEventListener("click", () => camSetFacing("rear"));
+    camBtnReset.addEventListener("click", camResetLook);
+    camBtnSave.addEventListener("click", camSaveLook);
+
+    async function camApplyPowerState(on) {
+      camBtnGotoGeneral.style.display = on ? "none" : "block";
+      if (!on) {
+        camLive.style.display = "none";
+        camOffline.style.display = "block";
+        camOffline.textContent = "Camera is off.";
+        camStopPreview();
+        return;
+      }
+      camOffline.style.display = "block";
+      camOffline.textContent = "Starting camera…";
+      const reachable = await camCheckReachable();
+      if (!reachable) {
+        camLive.style.display = "none";
+        camOffline.textContent = "Camera is on but not responding yet — this can take a few seconds right after power-on. Reopen this tab to retry.";
+        return;
+      }
+      camOffline.style.display = "none";
+      camLive.style.display = "grid";
+      try {
+        await camLoadFacingState();
+        await camLoadLook();
+        camRefreshPreview();
+        setStatus(camStatus, "");
+      } catch (err) {
+        setStatus(camStatus, String(err.message || err), "bad");
+      }
+    }
+
+    async function camRefreshPowerState() {
+      try {
+        const res = await fetch(CAM_POWER_BASE + "/status", { cache: "no-store" });
+        const data = await res.json();
+        if (!res.ok || data.ok === false) throw new Error(data.error || "status failed");
+        const on = !!(data.camera && data.camera.power !== false);
+        camPowerToggle.checked = on;
+        await camApplyPowerState(on);
+      } catch (err) {
+        camOffline.style.display = "block";
+        camOffline.textContent = "Couldn't reach the tablet's control API: " + String(err.message || err);
+        camLive.style.display = "none";
+        setStatus(camStatus, "");
+      }
+    }
+
+    camPowerToggle.addEventListener("change", async () => {
+      const want = camPowerToggle.checked;
+      camPowerToggle.disabled = true;
+      setStatus(camStatus, want ? "Turning camera on…" : "Turning camera off…");
+      try {
+        const res = await fetch(CAM_POWER_BASE + "/camera", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ on: want }),
+        });
+        const data = await res.json();
+        if (!res.ok || data.ok === false) throw new Error(data.error || "toggle failed");
+        const on = data.on !== undefined ? !!data.on : want;
+        camPowerToggle.checked = on;
+        setStatus(camStatus, on ? "Camera on" : "Camera off", "ok");
+        // Give the stream service a moment to actually bind before probing it.
+        setTimeout(() => camApplyPowerState(on), on ? 1500 : 0);
+      } catch (err) {
+        setStatus(camStatus, String(err.message || err), "bad");
+        camPowerToggle.checked = !want;
+      }
+      camPowerToggle.disabled = false;
+    });
+
+    // ---- General tab ----
+    // Camera power, charge LED, and rotation all talk straight to
+    // power-api.py (17823, same as the Cameras tab's power toggle already
+    // does) — these used to live in the drawer; moved here so the drawer
+    // stays focused on day-to-day quick actions and this page holds the
+    // less-frequently-changed configuration.
+    const chgledToggle = document.getElementById("chgled-power");
+    const autoRotateToggle = document.getElementById("auto-rotate");
+    const rotateButtons = document.querySelectorAll("[data-rotate]");
+    const generalStatus = document.getElementById("general-status");
+    const manualRotateGroup = document.getElementById("manual-rotate-group");
+    const manualRotateHiddenHint = document.getElementById("manual-rotate-hidden-hint");
+    let currentRotation = "normal";
+
+    function updateRotateButtonsUi() {
+      rotateButtons.forEach((b) => {
+        b.classList.toggle("active", b.getAttribute("data-rotate") === currentRotation);
+      });
+    }
+
+    function updateManualRotateVisibility() {
+      const auto = autoRotateToggle.checked;
+      manualRotateGroup.style.display = auto ? "none" : "block";
+      manualRotateHiddenHint.style.display = auto ? "block" : "none";
+    }
+
+    async function generalLoad() {
+      try {
+        const res = await fetch(CAM_POWER_BASE + "/status", { cache: "no-store" });
+        const data = await res.json();
+        if (!res.ok || data.ok === false) throw new Error(data.error || "status failed");
+        camPowerToggle.checked = !!(data.camera && data.camera.power !== false);
+        chgledToggle.checked = !!(data.chgled && data.chgled.on !== false);
+        autoRotateToggle.checked = !!(data.auto_rotate && data.auto_rotate.on);
+        currentRotation = data.rotation || "normal";
+        updateRotateButtonsUi();
+        updateManualRotateVisibility();
+      } catch (err) {
+        setStatus(generalStatus, String(err.message || err), "bad");
+      }
+    }
+
+    // Note: camPowerToggle itself (id="camera-power") is declared and wired
+    // up above in the Cameras tab block — that <input> now physically lives
+    // in this General panel's markup, but the element and its change
+    // handler are the same ones, unchanged.
+
+    chgledToggle.addEventListener("change", async () => {
+      const want = chgledToggle.checked;
+      chgledToggle.disabled = true;
+      setStatus(generalStatus, want ? "Turning charge LED on…" : "Turning charge LED off…");
+      try {
+        const res = await fetch(CAM_POWER_BASE + "/chgled", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ on: want }),
+        });
+        const data = await res.json();
+        if (!res.ok || data.ok === false) throw new Error(data.error || "toggle failed");
+        chgledToggle.checked = data.on !== undefined ? !!data.on : want;
+        setStatus(generalStatus, chgledToggle.checked ? "Charge LED on" : "Charge LED off", "ok");
+      } catch (err) {
+        setStatus(generalStatus, String(err.message || err), "bad");
+        chgledToggle.checked = !want;
+      }
+      chgledToggle.disabled = false;
+    });
+
+    autoRotateToggle.addEventListener("change", async () => {
+      const want = autoRotateToggle.checked;
+      autoRotateToggle.disabled = true;
+      updateManualRotateVisibility();
+      setStatus(generalStatus, want ? "Enabling auto-rotate…" : "Disabling auto-rotate…");
+      try {
+        const res = await fetch(CAM_POWER_BASE + "/auto-rotate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ on: want }),
+        });
+        const data = await res.json();
+        if (!res.ok || data.ok === false) throw new Error(data.error || "toggle failed");
+        autoRotateToggle.checked = data.on !== undefined ? !!data.on : want;
+        setStatus(generalStatus, autoRotateToggle.checked ? "Auto-rotate on" : "Auto-rotate off", "ok");
+      } catch (err) {
+        setStatus(generalStatus, String(err.message || err), "bad");
+        autoRotateToggle.checked = !want;
+      }
+      updateManualRotateVisibility();
+      autoRotateToggle.disabled = false;
+    });
+
+    rotateButtons.forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const direction = btn.getAttribute("data-rotate");
+        rotateButtons.forEach((b) => { b.disabled = true; });
+        setStatus(generalStatus, "Rotating…");
+        try {
+          const res = await fetch(CAM_POWER_BASE + "/rotate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ direction }),
+          });
+          const data = await res.json();
+          if (!res.ok || data.ok === false) throw new Error(data.error || "rotate failed");
+          currentRotation = data.rotation || direction;
+          updateRotateButtonsUi();
+          setStatus(generalStatus, data.message || "Rotated", "ok");
+        } catch (err) {
+          setStatus(generalStatus, String(err.message || err), "bad");
+        }
+        rotateButtons.forEach((b) => { b.disabled = false; });
+      });
+    });
+
+    // ---- Updates tab ----
+    // Talks to power-api.py (17823, same cross-origin pattern as General/
+    // Wi-Fi) for both the kiosk-software self-update (pulls a GitHub
+    // release tarball) and Debian package updates. Both "apply" actions
+    // kick off a detached, possibly multi-minute background job on the
+    // tablet and return immediately — this tab polls /update-status and
+    // /os-update-status to show progress rather than blocking on the
+    // initial request.
+    const updateVersionInfo = document.getElementById("update-version-info");
+    const btnUpdateCheck = document.getElementById("btn-update-check");
+    const updateAvailableBox = document.getElementById("update-available-box");
+    const updateNotes = document.getElementById("update-notes");
+    const updateIncludeCamera = document.getElementById("update-include-camera");
+    const btnUpdateApply = document.getElementById("btn-update-apply");
+    const updateProgress = document.getElementById("update-progress");
+
+    const osUpdateInfo = document.getElementById("os-update-info");
+    const btnOsUpdateCheck = document.getElementById("btn-os-update-check");
+    const osUpdateAvailableBox = document.getElementById("os-update-available-box");
+    const btnOsUpdateApply = document.getElementById("btn-os-update-apply");
+    const osRebootBanner = document.getElementById("os-reboot-banner");
+    const btnOsUpdateReboot = document.getElementById("btn-os-update-reboot");
+    const osUpdateProgress = document.getElementById("os-update-progress");
+
+    let updatePollTimer = null;
+    let osUpdatePollTimer = null;
+
+    async function updatesTabLoad() {
+      // If an apply is already in progress (e.g. the user tabbed away and
+      // back), resume showing its progress instead of starting a fresh
+      // check that would just overwrite it.
+      try {
+        const res = await fetch(CAM_POWER_BASE + "/update-status", { cache: "no-store" });
+        const data = await res.json();
+        if (["checking", "downloading", "extracting", "installing"].includes(data.state)) {
+          btnUpdateApply.disabled = true;
+          updateAvailableBox.style.display = "block";
+          pollUpdateStatus();
+        } else {
+          await updateCheckFn();
+        }
+      } catch (_) {
+        await updateCheckFn();
+      }
+      try {
+        const res2 = await fetch(CAM_POWER_BASE + "/os-update-status", { cache: "no-store" });
+        const data2 = await res2.json();
+        if (["updating", "upgrading"].includes(data2.state)) {
+          btnOsUpdateApply.disabled = true;
+          osUpdateAvailableBox.style.display = "block";
+          pollOsUpdateStatus();
+        } else {
+          await osUpdateCheckFn();
+        }
+      } catch (_) {
+        await osUpdateCheckFn();
+      }
+    }
+
+    async function updateCheckFn() {
+      updateAvailableBox.style.display = "none";
+      setStatus(updateProgress, "");
+      updateVersionInfo.innerHTML = `<div class="meta">Checking…</div>`;
+      btnUpdateCheck.disabled = true;
+      try {
+        const res = await fetch(CAM_POWER_BASE + "/update-check", { method: "POST" });
+        const data = await res.json();
+        if (!res.ok || data.ok === false) throw new Error(data.error || "check failed");
+        const current = data.current || "unknown";
+        const latest = data.latest || "unknown";
+        const avail = !!data.update_available;
+        updateVersionInfo.innerHTML = `
+          <div class="primary"><span class="dot ${avail ? "warn" : ""}"></span><span>${avail ? "Update available" : "Up to date"}</span></div>
+          <div class="meta"><span>Current: ${escapeHtml(current)}</span><span>Latest: ${escapeHtml(latest)}</span></div>
+        `;
+        if (avail) {
+          updateNotes.textContent = data.notes ? data.notes.slice(0, 600) : `New release: ${latest}`;
+          updateAvailableBox.style.display = "block";
+        }
+      } catch (err) {
+        updateVersionInfo.innerHTML = `<div class="meta">Couldn't check: ${escapeHtml(String(err.message || err))}</div>`;
+      }
+      btnUpdateCheck.disabled = false;
+    }
+
+    btnUpdateCheck.addEventListener("click", updateCheckFn);
+
+    btnUpdateApply.addEventListener("click", async () => {
+      if (!window.confirm("Update the kiosk software now? The tablet will briefly reload its display when done.")) return;
+      btnUpdateApply.disabled = true;
+      setStatus(updateProgress, "Starting update…");
+      try {
+        const res = await fetch(CAM_POWER_BASE + "/update-apply", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ include_camera: updateIncludeCamera.checked }),
+        });
+        const data = await res.json();
+        if (!res.ok || data.ok === false) throw new Error(data.error || "update failed to start");
+        pollUpdateStatus();
+      } catch (err) {
+        setStatus(updateProgress, String(err.message || err), "bad");
+        btnUpdateApply.disabled = false;
+      }
+    });
+
+    function pollUpdateStatus() {
+      if (updatePollTimer) clearInterval(updatePollTimer);
+      const poll = async () => {
+        try {
+          const res = await fetch(CAM_POWER_BASE + "/update-status", { cache: "no-store" });
+          const data = await res.json();
+          const state = data.state || "idle";
+          if (state === "checking") setStatus(updateProgress, "Checking for the latest release…");
+          else if (state === "downloading") setStatus(updateProgress, `Downloading ${data.version || ""}…`);
+          else if (state === "extracting") setStatus(updateProgress, "Extracting…");
+          else if (state === "installing") setStatus(updateProgress, "Installing — this can take a few minutes…");
+          else if (state === "done") {
+            setStatus(updateProgress, data.message || "Updated", "ok");
+            clearInterval(updatePollTimer);
+            updatePollTimer = null;
+            btnUpdateApply.disabled = false;
+            updateCheckFn();
+          } else if (state === "failed") {
+            setStatus(updateProgress, data.message || "Update failed", "bad");
+            clearInterval(updatePollTimer);
+            updatePollTimer = null;
+            btnUpdateApply.disabled = false;
+          }
+        } catch (_) { /* keep polling through transient errors */ }
+      };
+      poll();
+      updatePollTimer = setInterval(poll, 3000);
+    }
+
+    async function osUpdateCheckFn() {
+      osUpdateAvailableBox.style.display = "none";
+      setStatus(osUpdateProgress, "");
+      osUpdateInfo.innerHTML = `<div class="meta">Checking…</div>`;
+      btnOsUpdateCheck.disabled = true;
+      try {
+        const res = await fetch(CAM_POWER_BASE + "/os-update-check", { method: "POST" });
+        const data = await res.json();
+        if (!res.ok || data.ok === false) throw new Error(data.error || "check failed");
+        const count = data.upgradable_count || 0;
+        osUpdateInfo.innerHTML = `
+          <div class="primary"><span class="dot ${count > 0 ? "warn" : ""}"></span><span>${count > 0 ? count + " package" + (count === 1 ? "" : "s") + " available" : "Up to date"}</span></div>
+        `;
+        if (count > 0) osUpdateAvailableBox.style.display = "block";
+      } catch (err) {
+        osUpdateInfo.innerHTML = `<div class="meta">Couldn't check: ${escapeHtml(String(err.message || err))}</div>`;
+      }
+      btnOsUpdateCheck.disabled = false;
+    }
+
+    btnOsUpdateCheck.addEventListener("click", osUpdateCheckFn);
+
+    btnOsUpdateApply.addEventListener("click", async () => {
+      if (!window.confirm("Update Debian packages now? This only upgrades what's already installed (nothing removed or newly added), but may need a reboot afterward and is riskier than the kiosk-software update.")) return;
+      btnOsUpdateApply.disabled = true;
+      setStatus(osUpdateProgress, "Starting update…");
+      try {
+        const res = await fetch(CAM_POWER_BASE + "/os-update-apply", { method: "POST" });
+        const data = await res.json();
+        if (!res.ok || data.ok === false) throw new Error(data.error || "update failed to start");
+        pollOsUpdateStatus();
+      } catch (err) {
+        setStatus(osUpdateProgress, String(err.message || err), "bad");
+        btnOsUpdateApply.disabled = false;
+      }
+    });
+
+    function pollOsUpdateStatus() {
+      if (osUpdatePollTimer) clearInterval(osUpdatePollTimer);
+      const poll = async () => {
+        try {
+          const res = await fetch(CAM_POWER_BASE + "/os-update-status", { cache: "no-store" });
+          const data = await res.json();
+          const state = data.state || "idle";
+          if (state === "updating") setStatus(osUpdateProgress, "Refreshing package index…");
+          else if (state === "upgrading") setStatus(osUpdateProgress, "Upgrading packages — this can take a while…");
+          else if (state === "done") {
+            setStatus(osUpdateProgress, data.message || "Updated", "ok");
+            clearInterval(osUpdatePollTimer);
+            osUpdatePollTimer = null;
+            btnOsUpdateApply.disabled = false;
+            if (data.reboot_recommended) {
+              osRebootBanner.style.display = "block";
+              btnOsUpdateReboot.style.display = "block";
+            }
+            osUpdateCheckFn();
+          } else if (state === "failed") {
+            setStatus(osUpdateProgress, data.message || "Update failed", "bad");
+            clearInterval(osUpdatePollTimer);
+            osUpdatePollTimer = null;
+            btnOsUpdateApply.disabled = false;
+          }
+        } catch (_) { /* keep polling through transient errors */ }
+      };
+      poll();
+      osUpdatePollTimer = setInterval(poll, 3000);
+    }
+
+    btnOsUpdateReboot.addEventListener("click", async () => {
+      if (!window.confirm("Restart this tablet now?")) return;
+      try {
+        await fetch(CAM_POWER_BASE + "/reboot", { method: "POST" });
+      } catch (_) { /* tablet is rebooting either way */ }
+    });
+
+    function showTab(name) {
+      tabHa.classList.toggle("active", name === "ha");
+      tabWifi.classList.toggle("active", name === "wifi");
+      tabMqtt.classList.toggle("active", name === "mqtt");
+      tabCamera.classList.toggle("active", name === "camera");
+      tabGeneral.classList.toggle("active", name === "general");
+      tabUpdates.classList.toggle("active", name === "updates");
+      panelHa.classList.toggle("active", name === "ha");
+      panelWifi.classList.toggle("active", name === "wifi");
+      panelMqtt.classList.toggle("active", name === "mqtt");
+      panelCamera.classList.toggle("active", name === "camera");
+      panelGeneral.classList.toggle("active", name === "general");
+      panelUpdates.classList.toggle("active", name === "updates");
+      // Lazy-load the camera tab only while it's actually visible, and stop
+      // pulling the MJPEG stream the moment the user tabs away from it.
+      if (name === "camera") {
+        camRefreshPowerState();
+      } else {
+        camStopPreview();
+      }
+      if (name === "general") generalLoad();
+      if (name === "wifi") wifiLoadCurrent();
+      if (name === "updates") updatesTabLoad();
+    }
+    tabGeneral.addEventListener("click", () => showTab("general"));
+    tabUpdates.addEventListener("click", () => showTab("updates"));
+    tabHa.addEventListener("click", () => showTab("ha"));
+    tabWifi.addEventListener("click", () => showTab("wifi"));
+    tabMqtt.addEventListener("click", () => showTab("mqtt"));
+    tabCamera.addEventListener("click", () => showTab("camera"));
+    showTab(SECTION);
+
+    function setStatus(el, msg, kind) {
+      el.textContent = msg || "";
+      el.className = "status" + (kind ? " " + kind : "");
+    }
+
+    function done(extra) {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage(Object.assign({ type: "ha-kiosk-setup-done" }, extra || {}), "*");
+      }
+    }
+
+    // ---- Home Assistant tab ----
+    const baseInput = document.getElementById("ha-base");
+    const pathInput = document.getElementById("ha-path");
+    const urlPreview = document.getElementById("ha-url-preview");
+    const userInput = document.getElementById("ha-user");
+    const passInput = document.getElementById("ha-pass");
+    const btnTest = document.getElementById("btn-test");
+    const btnSave = document.getElementById("btn-save");
+    const haStatus = document.getElementById("ha-status");
+
+    function normalizedPath() {
+      let p = pathInput.value.trim();
+      if (!p) return "";
+      if (!p.startsWith("/")) p = "/" + p;
+      return p;
+    }
+
+    function composedUrl() {
+      const base = baseInput.value.trim().replace(/\/+$/, "");
+      return base + normalizedPath();
+    }
+
+    function updatePreview() {
+      const base = baseInput.value.trim();
+      urlPreview.textContent = base ? composedUrl() : "—";
+    }
+    baseInput.addEventListener("input", updatePreview);
+    pathInput.addEventListener("input", updatePreview);
+
+    async function loadCurrent() {
+      try {
+        const res = await fetch("/api/current", { cache: "no-store" });
+        const data = await res.json();
+        if (data.url) {
+          try {
+            const u = new URL(data.url);
+            baseInput.value = u.origin;
+            const rest = u.pathname + u.search + u.hash;
+            pathInput.value = rest === "/" ? "" : rest;
+          } catch (_) {
+            baseInput.value = data.url; // not a parseable URL — just show it as-is
+          }
+          updatePreview();
+        }
+        if (data.user) userInput.value = data.user;
+        if (data.has_password) passInput.placeholder = "(unchanged — retype to replace)";
+      } catch (_) { /* first boot: nothing saved yet */ }
+    }
+    loadCurrent();
+
+    btnTest.addEventListener("click", async () => {
+      const url = composedUrl();
+      if (!baseInput.value.trim()) { setStatus(haStatus, "Enter your Home Assistant URL first", "bad"); return; }
+      btnTest.disabled = true;
+      setStatus(haStatus, "Testing…");
+      try {
+        const res = await fetch("/api/test-url", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url }),
+        });
+        const data = await res.json();
+        if (data.ok) setStatus(haStatus, "Reachable (HTTP " + data.status + ")", "ok");
+        else setStatus(haStatus, "Not reachable: " + (data.error || "unknown error"), "bad");
+      } catch (err) {
+        setStatus(haStatus, String(err.message || err), "bad");
+      }
+      btnTest.disabled = false;
+    });
+
+    btnSave.addEventListener("click", async () => {
+      const url = composedUrl();
+      if (!url.startsWith("http://") && !url.startsWith("https://")) {
+        setStatus(haStatus, "Home Assistant URL must start with http:// or https://", "bad");
+        return;
+      }
+      btnSave.disabled = true;
+      setStatus(haStatus, EMBED ? "Saving…" : "Saving — the tablet will restart into your dashboard…");
+      try {
+        const res = await fetch("/api/save-ha", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            url,
+            user: userInput.value.trim(),
+            pass: passInput.value,
+            restart: true,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok || data.ok === false) throw new Error(data.error || "save failed");
+        if (EMBED) {
+          setStatus(haStatus, "Saved", "ok");
+          done({ restarted: !!data.restarted });
+        }
+        // Standalone: the kiosk service is restarting now, this page is about to die.
+      } catch (err) {
+        setStatus(haStatus, String(err.message || err), "bad");
+        btnSave.disabled = false;
+      }
+    });
+
+    // ---- Wi-Fi tab ----
+    const btnScan = document.getElementById("btn-scan");
+    const wifiList = document.getElementById("wifi-list");
+    const connectBox = document.getElementById("connect-box");
+    const connectLabel = document.getElementById("connect-label");
+    const wifiPass = document.getElementById("wifi-pass");
+    const btnConnect = document.getElementById("btn-connect");
+    const wifiStatus = document.getElementById("wifi-status");
+    const wifiCurrent = document.getElementById("wifi-current");
+    let selectedSsid = null;
+
+    // Talks to power-api.py (17823, cross-origin — same CORS pattern as the
+    // Cameras/General tabs) rather than setup-wizard.py's own API, since
+    // power-api already computes exactly this (IP + nmcli SSID/signal) for
+    // the drawer's info card.
+    async function wifiLoadCurrent() {
+      try {
+        const res = await fetch(CAM_POWER_BASE + "/status", { cache: "no-store" });
+        const data = await res.json();
+        if (!res.ok || data.ok === false) throw new Error(data.error || "status failed");
+        const wifi = data.wifi || {};
+        if (!wifi.ssid) {
+          wifiCurrent.innerHTML = `
+            <div class="primary"><span class="dot off"></span><span>Not connected</span></div>
+          `;
+          return;
+        }
+        const bits = [
+          wifi.ip ? `IP ${escapeHtml(wifi.ip)}` : null,
+          wifi.signal != null ? `Signal ${escapeHtml(wifi.signal)}%` : null,
+          wifi.iface ? escapeHtml(wifi.iface) : null,
+        ].filter(Boolean);
+        wifiCurrent.innerHTML = `
+          <div class="primary"><span class="dot"></span><span>${escapeHtml(wifi.ssid)}</span></div>
+          <div class="meta">${bits.map((b) => `<span>${b}</span>`).join("")}</div>
+        `;
+      } catch (err) {
+        wifiCurrent.innerHTML = `<div class="meta">Couldn't load current connection: ${escapeHtml(String(err.message || err))}</div>`;
+      }
+    }
+
+    function renderNetworks(networks) {
+      wifiList.innerHTML = "";
+      for (const net of networks) {
+        const item = document.createElement("div");
+        item.className = "wifi-item";
+        item.innerHTML = `<span>${net.secure ? "🔒 " : ""}${escapeHtml(net.ssid)}</span><span class="meta">${net.signal}%</span>`;
+        item.addEventListener("click", () => selectNetwork(net));
+        wifiList.appendChild(item);
+      }
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    function selectNetwork(net) {
+      selectedSsid = net.ssid;
+      document.querySelectorAll(".wifi-item").forEach((el) => el.classList.remove("active"));
+      [...wifiList.children].forEach((el, i) => {
+        if (el.textContent.includes(net.ssid)) el.classList.add("active");
+      });
+      connectLabel.textContent = net.secure ? "Password" : "Password (open network — leave blank)";
+      wifiPass.value = "";
+      connectBox.classList.add("open");
+      setStatus(wifiStatus, "");
+    }
+
+    btnScan.addEventListener("click", async () => {
+      btnScan.disabled = true;
+      setStatus(wifiStatus, "Scanning…");
+      try {
+        const res = await fetch("/api/wifi-scan", { method: "POST" });
+        const data = await res.json();
+        if (!res.ok || data.ok === false) throw new Error(data.error || "scan failed");
+        renderNetworks(data.networks || []);
+        setStatus(wifiStatus, (data.networks || []).length ? "" : "No networks found");
+      } catch (err) {
+        setStatus(wifiStatus, String(err.message || err), "bad");
+      }
+      btnScan.disabled = false;
+    });
+
+    btnConnect.addEventListener("click", async () => {
+      if (!selectedSsid) return;
+      btnConnect.disabled = true;
+      setStatus(wifiStatus, "Connecting…");
+      try {
+        const res = await fetch("/api/wifi-connect", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ssid: selectedSsid, password: wifiPass.value }),
+        });
+        const data = await res.json();
+        if (!res.ok || data.ok === false) throw new Error(data.error || "connect failed");
+        setStatus(wifiStatus, data.message || "Connected", "ok");
+        setTimeout(wifiLoadCurrent, 1500);
+        if (EMBED) done({ wifi: true });
+      } catch (err) {
+        setStatus(wifiStatus, String(err.message || err), "bad");
+      }
+      btnConnect.disabled = false;
+    });
+
+    if (SECTION === "wifi") btnScan.click();
+
+    // ---- MQTT tab ----
+    const mqttEnabled = document.getElementById("mqtt-enabled");
+    const mqttHost = document.getElementById("mqtt-host");
+    const mqttPort = document.getElementById("mqtt-port");
+    const mqttUser = document.getElementById("mqtt-user");
+    const mqttPass = document.getElementById("mqtt-pass");
+    const btnMqttTest = document.getElementById("btn-mqtt-test");
+    const btnMqttSave = document.getElementById("btn-mqtt-save");
+    const mqttStatus = document.getElementById("mqtt-status");
+
+    async function loadMqttCurrent() {
+      try {
+        const res = await fetch("/api/mqtt-current", { cache: "no-store" });
+        const data = await res.json();
+        if (!res.ok || data.ok === false) return;
+        mqttHost.value = data.host || "";
+        mqttPort.value = data.port || "1883";
+        mqttUser.value = data.user || "";
+        if (data.has_password) mqttPass.placeholder = "(unchanged — retype to replace)";
+        mqttEnabled.checked = !!data.enabled;
+      } catch (_) { /* first boot: nothing saved yet */ }
+    }
+    loadMqttCurrent();
+
+    btnMqttTest.addEventListener("click", async () => {
+      if (!mqttHost.value.trim()) { setStatus(mqttStatus, "Enter the broker host first", "bad"); return; }
+      btnMqttTest.disabled = true;
+      setStatus(mqttStatus, "Testing…");
+      try {
+        const res = await fetch("/api/mqtt-test", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            host: mqttHost.value.trim(),
+            port: Number(mqttPort.value.trim() || 1883),
+            user: mqttUser.value.trim(),
+            pass: mqttPass.value,
+          }),
+        });
+        const data = await res.json();
+        if (data.ok) setStatus(mqttStatus, "Connected", "ok");
+        else setStatus(mqttStatus, "Failed: " + (data.error || "unknown error"), "bad");
+      } catch (err) {
+        setStatus(mqttStatus, String(err.message || err), "bad");
+      }
+      btnMqttTest.disabled = false;
+    });
+
+    btnMqttSave.addEventListener("click", async () => {
+      if (mqttEnabled.checked && !mqttHost.value.trim()) {
+        setStatus(mqttStatus, "Enter the broker host first", "bad");
+        return;
+      }
+      btnMqttSave.disabled = true;
+      setStatus(mqttStatus, "Saving…");
+      try {
+        const res = await fetch("/api/save-mqtt", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            host: mqttHost.value.trim(),
+            port: mqttPort.value.trim() || "1883",
+            user: mqttUser.value.trim(),
+            pass: mqttPass.value,
+            enabled: mqttEnabled.checked,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok || data.ok === false) throw new Error(data.error || "save failed");
+        setStatus(mqttStatus, data.enabled ? "Saved — publishing to Home Assistant" : "Saved — MQTT disabled", "ok");
+        mqttPass.value = "";
+        if (data.enabled) mqttPass.placeholder = "(unchanged — retype to replace)";
+        if (EMBED) done({ mqtt: true });
+      } catch (err) {
+        setStatus(mqttStatus, String(err.message || err), "bad");
+      }
+      btnMqttSave.disabled = false;
+    });
+
+    if (SECTION === "mqtt") loadMqttCurrent();
+
+  </script>
+</body>
+</html>

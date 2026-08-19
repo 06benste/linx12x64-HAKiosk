@@ -1,0 +1,12 @@
+[Unit]
+Description=HA kiosk first-boot setup wizard (localhost + LAN)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/ha-kiosk/scripts/setup-wizard.py
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

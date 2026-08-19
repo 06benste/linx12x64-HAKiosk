@@ -1,0 +1,35 @@
+{
+  "injection": [
+    {
+      "image": "/debian-netinst.iso",
+      "archive": "/ventoy/firmware-inject.tar.gz"
+    }
+  ],
+  "conf_replace": [
+    {
+      "iso": "/debian-netinst.iso",
+      "org": "/isolinux/txt.cfg",
+      "new": "/ventoy/boot-fix/txt.cfg"
+    },
+    {
+      "iso": "/debian-netinst.iso",
+      "org": "/isolinux/gtk.cfg",
+      "new": "/ventoy/boot-fix/gtk.cfg"
+    },
+    {
+      "iso": "/debian-netinst.iso",
+      "org": "/isolinux/adtxt.cfg",
+      "new": "/ventoy/boot-fix/adtxt.cfg"
+    },
+    {
+      "iso": "/debian-netinst.iso",
+      "org": "/isolinux/adgtk.cfg",
+      "new": "/ventoy/boot-fix/adgtk.cfg"
+    },
+    {
+      "iso": "/debian-netinst.iso",
+      "org": "/boot/grub/grub.cfg",
+      "new": "/ventoy/boot-fix/grub.cfg"
+    }
+  ]
+}

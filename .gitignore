@@ -1,0 +1,21 @@
+credentials.txt
+credentials.env
+ha-credentials.env
+chromium-extension/config.js
+**/config.local.js
+
+# Downloaded installer media / firmware bundles — large, re-fetchable, not source
+downloads/
+
+# Scratch/debug output from ad-hoc diagnostic sessions — never intentional deliverables
+tmp_cam_diag/
+logs/
+
+# IDE / build artifacts
+.vs/
+__pycache__/
+*.pyc
+
+# Curated release snapshot, populated for upload as a separate GitHub release —
+# a full duplicate of selected files, not something to track alongside its own source
+V0.1/

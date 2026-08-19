@@ -1,0 +1,13 @@
+[Unit]
+Description=HA kiosk wake-on-touch (undo intentional display blank on input)
+After=ha-kiosk-power.service
+Requires=ha-kiosk-power.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/ha-kiosk/scripts/wake-on-touch.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

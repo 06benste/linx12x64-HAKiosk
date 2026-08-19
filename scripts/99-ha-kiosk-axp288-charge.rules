@@ -1,0 +1,1 @@
+ACTION=="add|change", SUBSYSTEM=="power_supply", KERNEL=="axp288_charger", RUN+="/opt/ha-kiosk/scripts/fix-charger-limit.sh"

@@ -1,0 +1,12 @@
+[Unit]
+Description=Clean shutdown on critically low battery
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/ha-kiosk/scripts/battery-guard.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

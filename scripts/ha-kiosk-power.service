@@ -1,0 +1,16 @@
+[Unit]
+Description=HA kiosk control API (LAN + localhost)
+After=network.target
+
+[Service]
+Type=simple
+# Needed for the charge-LED control's direct AXP288 i2c register access —
+# load on demand, same as ha-kiosk-camera-stream.service already does for
+# its own i2c exposure control.
+ExecStartPre=-/sbin/modprobe i2c-dev
+ExecStart=/usr/bin/python3 /opt/ha-kiosk/scripts/power-api.py
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

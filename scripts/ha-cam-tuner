@@ -1,0 +1,33 @@
+#!/bin/bash
+# Open the local on-tablet camera look tuner.
+set -euo pipefail
+URL="http://127.0.0.1:17824/tuner"
+export DISPLAY="${DISPLAY:-:0}"
+if [[ -f /home/kioskuser/.Xauthority ]]; then
+  export XAUTHORITY=/home/kioskuser/.Xauthority
+elif [[ -f /opt/ha-kiosk/.Xauthority ]]; then
+  export XAUTHORITY=/opt/ha-kiosk/.Xauthority
+fi
+
+# Ensure stream + tuner HTTP server is up.
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl is-active --quiet ha-kiosk-camera-stream.service \
+    || systemctl start ha-kiosk-camera-stream.service || true
+fi
+
+for i in $(seq 1 20); do
+  if curl -fsS --max-time 1 "$URL" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.5
+done
+
+if [[ -n "${DISPLAY:-}" ]] && command -v chromium >/dev/null 2>&1; then
+  exec chromium --app="$URL" --new-window \
+    --disable-features=TranslateUI \
+    --no-first-run \
+    --disable-session-crashed-bubble \
+    "$URL"
+fi
+
+echo "Open camera tuner: $URL"

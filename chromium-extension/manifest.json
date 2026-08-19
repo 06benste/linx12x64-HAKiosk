@@ -1,0 +1,40 @@
+{
+  "manifest_version": 3,
+  "name": "HA Kiosk Autologin",
+  "version": "1.4.5",
+  "description": "HA kiosk autologin, kiosk-mode, and tablet control drawer",
+  "permissions": [],
+  "host_permissions": [
+    "http://127.0.0.1:17823/*",
+    "http://127.0.0.1:17824/*",
+    "http://127.0.0.1:17825/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "exclude_matches": [
+        "http://127.0.0.1/*",
+        "http://localhost/*"
+      ],
+      "js": ["rotation.js", "kiosk-mode.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    },
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "exclude_matches": [
+        "http://127.0.0.1/*",
+        "http://localhost/*"
+      ],
+      "js": ["config.js", "content.js", "power-drawer.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ]
+}

@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "approved_at": "2026-08-18T10:41:58+01:00",
+  "host": "192.168.8.201",
+  "software_preview": {
+    "exposure_ev": -0.55,
+    "contrast": 1.1,
+    "saturation": 1.0,
+    "wb_r": 1.18,
+    "wb_g": 0.98,
+    "wb_b": 1.05,
+    "shadows": 0.15,
+    "highlights": 0.4
+  },
+  "software_preview_by_facing": {
+    "front": {
+      "exposure_ev": -0.55,
+      "contrast": 1.1,
+      "saturation": 1.0,
+      "wb_r": 1.18,
+      "wb_g": 0.98,
+      "wb_b": 1.05,
+      "shadows": 0.15,
+      "highlights": 0.4
+    }
+  },
+  "auto": {
+    "enabled": false,
+    "target_luma": 100,
+    "target_span": 115,
+    "luma_smooth": 0.14,
+    "wb_smooth": 0.05,
+    "contrast_smooth": 0.06,
+    "min_ev": -0.3,
+    "max_ev": 1.7,
+    "min_wb": 0.92,
+    "max_wb": 1.12,
+    "min_contrast": 0.98,
+    "max_contrast": 1.15
+  },
+  "capture": {
+    "frames": 2,
+    "width": 1584,
+    "height": 1184,
+    "stride_width": 1600,
+    "pixelformat": "NV12"
+  },
+  "notes": "HW exposure/gain via i2c (exp~1600, b6=3); mild software grade on top. This software_preview is a point-in-time calibration for whatever room lighting was present at approved_at — it is NOT auto-adjusting (auto.enabled is unused dead code, see camera_preview.py's AutoLookState, which nothing in camera-stream-server.py's hot path calls). If the picture looks over/under-exposed after a fresh install or once lighting changes, re-tune live at http://<tablet-ip>:17824/tuner and click Save (POST /api/look) — no restart needed."
+}

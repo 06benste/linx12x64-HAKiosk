@@ -1,0 +1,13 @@
+[Unit]
+Description=Secondary power/thermal mitigations (low-battery dim, thermal camera cutoff)
+After=multi-user.target ha-kiosk-power.service
+Wants=ha-kiosk-power.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/ha-kiosk/scripts/kiosk-guardian.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

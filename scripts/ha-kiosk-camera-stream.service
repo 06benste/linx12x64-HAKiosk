@@ -1,0 +1,25 @@
+[Unit]
+Description=HA kiosk front camera MJPEG stream
+After=network-online.target ha-kiosk-atomisp.service
+Wants=network-online.target ha-kiosk-atomisp.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/ha-kiosk/scripts/camera-stream-server.py
+Restart=always
+RestartSec=3
+EnvironmentFile=-/opt/ha-kiosk/mqtt.env
+Environment=CAMERA_STREAM_HOST=0.0.0.0
+Environment=CAMERA_STREAM_PORT=17824
+Environment=CAMERA_STREAM_WIDTH=800
+Environment=CAMERA_STREAM_HEIGHT=600
+Environment=CAMERA_STREAM_FPS=15
+Environment=CAMERA_STREAM_QUALITY=6
+Environment=CAMERA_STREAM_V4L_BUFFERS=4
+# Needed for GC2355 exposure/gain forcing via /dev/i2c-*
+ExecStartPre=-/sbin/modprobe i2c-dev
+# Free V4L2 on stop (never fail the unit; do not pkill all ffmpeg)
+ExecStopPost=-/bin/bash -c '/usr/bin/pkill -9 -f "v4l2-ctl --stream" || true'
+
+[Install]
+WantedBy=multi-user.target

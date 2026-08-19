@@ -1,0 +1,20 @@
+[Unit]
+Description=HA kiosk MQTT device bridge
+After=network-online.target ha-kiosk-power.service
+Wants=network-online.target
+Requires=ha-kiosk-power.service
+# Deliberately NOT ordered against camera-stream/atomisp — that created a
+# shutdown/boot dependency cycle that left these units inactive (dead).
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/ha-kiosk/scripts/ha-kiosk-mqtt.py
+Restart=always
+RestartSec=5
+KillMode=control-group
+TimeoutStopSec=10
+ExecStopPost=-/bin/bash -c '/usr/bin/pkill -9 -f "v4l2-ctl --stream" || true'
+EnvironmentFile=-/opt/ha-kiosk/mqtt.env
+
+[Install]
+WantedBy=multi-user.target

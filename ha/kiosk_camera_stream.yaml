@@ -1,0 +1,41 @@
+# Home Assistant — Linx kiosk live camera
+#
+# IMPORTANT: The MQTT entity camera.hakiosk_camera_stream (shows whichever
+# camera — front or rear — is currently selected) only gets an occasional
+# still JPEG (see CAMERA_STREAM_MQTT_FPS in mqtt.env.example). That's fine
+# for a thumbnail, but it is NOT a live stream.
+#
+# For live video (one long-lived HTTP connection, full CAMERA_STREAM_FPS):
+# include this file, or add the block under `camera:` in configuration.yaml,
+# then restart HA / reload camera entities.
+#
+# AUTH: camera-stream-server.py requires a token for any caller that isn't
+# the tablet itself (07-power-drawer.sh generates one at
+# /opt/ha-kiosk/api.token on install — `ssh kioskuser@<tablet> cat
+# /opt/ha-kiosk/api.token`). The mjpeg platform can't send custom headers,
+# so the token has to ride in the URL query string instead of an
+# Authorization header — that's why it's the *whole URL* as one secret
+# below rather than `!secret` spliced into a string (YAML doesn't support
+# that). Add both to HA's secrets.yaml, token pasted in place of the
+# placeholder:
+#   hakiosk_mjpeg_url: "http://192.168.8.201:17824/stream.mjpg?token=PASTE_TOKEN_HERE"
+#   hakiosk_still_url: "http://192.168.8.201:17824/snapshot.jpg?token=PASTE_TOKEN_HERE"
+
+camera:
+  - platform: mjpeg
+    name: HA Kiosk Live
+    mjpeg_url: !secret hakiosk_mjpeg_url
+    still_image_url: !secret hakiosk_still_url
+
+# Lovelace tip: use camera.ha_kiosk_live with camera_view: live
+#
+# Optional smoother browser playback via go2rtc (runs on the HA host, still
+# pulls MJPEG once from the tablet — do not re-encode on the Linx):
+#
+# go2rtc:
+#   streams:
+#     hakiosk_live: ffmpeg:http://192.168.8.201:17824/stream.mjpg#video=copy
+#
+# Why not RTSP/H.264 from the tablet?
+#   Cherry Trail has no practical HW encoder here; software x264 at 25–30 fps
+#   is heavier than MJPEG and tends to stall AtomISP. Prefer MJPEG or go2rtc.

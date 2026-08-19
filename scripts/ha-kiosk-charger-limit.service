@@ -1,0 +1,12 @@
+[Unit]
+Description=Raise AXP288 USB input current limit for kiosk charging
+After=sysinit.target
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+ExecStart=/opt/ha-kiosk/scripts/fix-charger-limit.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
