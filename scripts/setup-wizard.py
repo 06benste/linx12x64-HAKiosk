@@ -81,6 +81,16 @@ def has_password() -> bool:
     return False
 
 
+def read_current_password() -> str:
+    if not CRED_FILE.exists():
+        return ""
+    for line in CRED_FILE.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line.startswith("HA_PASS="):
+            return line[len("HA_PASS="):]
+    return ""
+
+
 def write_ha_config(url: str, user: str, password: str) -> None:
     URL_FILE.parent.mkdir(parents=True, exist_ok=True)
     URL_FILE.write_text(url.strip() + "\n", encoding="utf-8")
@@ -578,6 +588,14 @@ class Handler(BaseHTTPRequestHandler):
             url = str(body.get("url", "")).strip()
             user = str(body.get("user", "")).strip()
             password = str(body.get("pass", "")).strip()
+            # A blank password here usually just means "leave it as the
+            # already-saved one" (the field shows a placeholder, not the
+            # real value, same as the MQTT password field) — fall back to
+            # what's stored, but only when the username still matches, so
+            # switching to a different account doesn't silently reuse the
+            # old one's password.
+            if not password and user and user == read_current_user():
+                password = read_current_password()
             if not url.startswith(("http://", "https://")):
                 self._json(400, {"ok": False, "error": "URL must start with http:// or https://"})
                 return

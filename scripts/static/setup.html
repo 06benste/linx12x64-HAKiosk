@@ -1274,7 +1274,8 @@
     btnFetchDashboards.addEventListener("click", async () => {
       const base = baseInput.value.trim();
       if (!base) { setStatus(dashboardStatus, "Enter your Home Assistant URL first", "bad"); return; }
-      if (!userInput.value.trim() || !passInput.value) {
+      const canUseSavedPassword = hasSavedPassword && userInput.value.trim() === savedUser;
+      if (!userInput.value.trim() || (!passInput.value && !canUseSavedPassword)) {
         setStatus(dashboardStatus, "Enter username and password above first", "bad");
         return;
       }
@@ -1297,6 +1298,9 @@
       btnFetchDashboards.disabled = false;
     });
 
+    let hasSavedPassword = false;
+    let savedUser = "";
+
     async function loadCurrent() {
       try {
         const res = await fetch("/api/current", { cache: "no-store" });
@@ -1312,8 +1316,14 @@
           }
           updatePreview();
         }
-        if (data.user) userInput.value = data.user;
-        if (data.has_password) passInput.placeholder = "(unchanged — retype to replace)";
+        if (data.user) {
+          userInput.value = data.user;
+          savedUser = data.user;
+        }
+        if (data.has_password) {
+          passInput.placeholder = "(unchanged — retype to replace)";
+          hasSavedPassword = true;
+        }
       } catch (_) { /* first boot: nothing saved yet */ }
     }
     loadCurrent();
