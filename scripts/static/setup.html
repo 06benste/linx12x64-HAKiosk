@@ -106,6 +106,22 @@
       min-height: 52px;
     }
     input:focus { outline: 2px solid var(--accent); }
+    .pw-wrap { position: relative; }
+    .pw-wrap input { padding-right: 64px; width: 100%; }
+    .pw-toggle {
+      appearance: none;
+      position: absolute;
+      right: 6px;
+      top: 50%;
+      transform: translateY(-50%);
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+      padding: 8px 10px;
+      cursor: pointer;
+    }
     .hint { font-size: 12px; color: var(--muted); margin-top: 5px; }
     .row-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     .stack { display: grid; gap: 8px; }
@@ -305,22 +321,30 @@
         <div class="hint">Where your Home Assistant lives, including <code>http://</code> — no dashboard path yet.</div>
       </div>
       <div class="field">
+        <label for="ha-user">Username <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
+        <input id="ha-user" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
+      </div>
+      <div class="field">
+        <label for="ha-pass">Password <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
+        <div class="pw-wrap">
+          <input id="ha-pass" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
+          <button type="button" class="pw-toggle" data-target="ha-pass">Show</button>
+        </div>
+        <div class="hint">Leave both blank if you're using Trusted Networks — see help below. Fill these in first if you want to pick your dashboard from a list instead of typing its path.</div>
+      </div>
+      <div class="field">
         <label for="ha-path">Dashboard <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
         <input id="ha-path" type="text" placeholder="/dashboard-kiosk" autocomplete="off" />
         <div class="hint">Which page this tablet should show. Leave blank for your default dashboard, or type a path like <code>/dashboard-kiosk</code> or <code>/lovelace/0</code> — see help below for how to find one.</div>
+        <div class="row-btns" style="grid-template-columns:1fr;margin-top:8px">
+          <button type="button" class="btn secondary" id="btn-fetch-dashboards">Fetch available dashboards</button>
+        </div>
+        <div class="wifi-list" id="ha-dashboard-list" style="margin-top:8px"></div>
+        <div class="status" id="ha-dashboard-status" aria-live="polite"></div>
       </div>
       <div class="field">
         <label>Full URL</label>
         <div class="hint" id="ha-url-preview" style="font-size:13px;color:var(--text);word-break:break-all;">—</div>
-      </div>
-      <div class="field">
-        <label for="ha-user">Username <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
-        <input id="ha-user" type="text" autocomplete="off" />
-      </div>
-      <div class="field">
-        <label for="ha-pass">Password <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
-        <input id="ha-pass" type="password" autocomplete="off" />
-        <div class="hint">Leave both blank if you're using Trusted Networks — see help below.</div>
       </div>
       <div class="row-btns">
         <button type="button" class="btn secondary" id="btn-test">Test connection</button>
@@ -370,7 +394,10 @@
       <div class="connect-box" id="connect-box">
         <div class="field">
           <label id="connect-label" for="wifi-pass">Password</label>
-          <input id="wifi-pass" type="password" autocomplete="off" />
+          <div class="pw-wrap">
+            <input id="wifi-pass" type="password" autocomplete="off" />
+            <button type="button" class="pw-toggle" data-target="wifi-pass">Show</button>
+          </div>
         </div>
         <button type="button" class="btn" id="btn-connect">Connect</button>
       </div>
@@ -396,11 +423,14 @@
       </div>
       <div class="field">
         <label for="mqtt-user">Username</label>
-        <input id="mqtt-user" type="text" autocomplete="off" />
+        <input id="mqtt-user" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
       </div>
       <div class="field">
         <label for="mqtt-pass">Password</label>
-        <input id="mqtt-pass" type="password" autocomplete="off" />
+        <div class="pw-wrap">
+          <input id="mqtt-pass" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
+          <button type="button" class="pw-toggle" data-target="mqtt-pass">Show</button>
+        </div>
       </div>
       <div class="row-btns">
         <button type="button" class="btn secondary" id="btn-mqtt-test">Test connection</button>
@@ -1205,6 +1235,61 @@
     baseInput.addEventListener("input", updatePreview);
     pathInput.addEventListener("input", updatePreview);
 
+    // ---- Dashboard picker ----
+    // Logs into HA with the username/password above (a real HA login, via
+    // the same flow the frontend's own login form uses) just long enough to
+    // ask its websocket API for the dashboard list, then throws that token
+    // away. Only works with a real HA account — Trusted Networks setups
+    // have nothing to exchange for a token, so they stay on manual entry.
+    const btnFetchDashboards = document.getElementById("btn-fetch-dashboards");
+    const dashboardList = document.getElementById("ha-dashboard-list");
+    const dashboardStatus = document.getElementById("ha-dashboard-status");
+
+    function renderDashboards(dashboards) {
+      dashboardList.innerHTML = "";
+      for (const d of dashboards) {
+        const item = document.createElement("div");
+        item.className = "wifi-item";
+        const target = d.url_path ? "/" + d.url_path : "";
+        item.innerHTML = `<span>${escapeHtml(d.title || d.url_path || "Untitled")}</span><span class="meta">${target || "default"}</span>`;
+        item.addEventListener("click", () => {
+          pathInput.value = target;
+          updatePreview();
+          [...dashboardList.children].forEach((el) => el.classList.remove("active"));
+          item.classList.add("active");
+          setStatus(dashboardStatus, "Selected " + (d.title || target || "default dashboard"), "ok");
+        });
+        dashboardList.appendChild(item);
+      }
+      if (!dashboards.length) setStatus(dashboardStatus, "No dashboards found");
+    }
+
+    btnFetchDashboards.addEventListener("click", async () => {
+      const base = baseInput.value.trim();
+      if (!base) { setStatus(dashboardStatus, "Enter your Home Assistant URL first", "bad"); return; }
+      if (!userInput.value.trim() || !passInput.value) {
+        setStatus(dashboardStatus, "Enter username and password above first", "bad");
+        return;
+      }
+      btnFetchDashboards.disabled = true;
+      dashboardList.innerHTML = "";
+      setStatus(dashboardStatus, "Logging in and fetching dashboards…");
+      try {
+        const res = await fetch("/api/ha-dashboards", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: base, user: userInput.value.trim(), pass: passInput.value }),
+        });
+        const data = await res.json();
+        if (!res.ok || data.ok === false) throw new Error(data.error || "fetch failed");
+        renderDashboards(data.dashboards || []);
+        if (data.dashboards && data.dashboards.length) setStatus(dashboardStatus, "");
+      } catch (err) {
+        setStatus(dashboardStatus, String(err.message || err), "bad");
+      }
+      btnFetchDashboards.disabled = false;
+    });
+
     async function loadCurrent() {
       try {
         const res = await fetch("/api/current", { cache: "no-store" });
@@ -1465,6 +1550,18 @@
 
     if (SECTION === "mqtt") loadMqttCurrent();
 
+    // ---- Password show/hide ----
+    document.querySelectorAll(".pw-toggle").forEach((btn) => {
+      const input = document.getElementById(btn.getAttribute("data-target"));
+      if (!input) return;
+      btn.addEventListener("click", () => {
+        const hidden = input.type === "password";
+        input.type = hidden ? "text" : "password";
+        btn.textContent = hidden ? "Hide" : "Show";
+      });
+    });
+
   </script>
+  <script src="osk.js"></script>
 </body>
 </html>

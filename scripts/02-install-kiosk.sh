@@ -50,6 +50,7 @@ fi
 mkdir -p "$INSTALL_ROOT/scripts/static"
 install -m 755 "$ROOT/scripts/setup-wizard.py" "$INSTALL_ROOT/scripts/setup-wizard.py"
 install -m 644 "$ROOT/scripts/static/setup.html" "$INSTALL_ROOT/scripts/static/setup.html"
+install -m 644 "$ROOT/scripts/static/osk.js" "$INSTALL_ROOT/scripts/static/osk.js"
 install -m 644 "$ROOT/scripts/ha-kiosk-setup.service" /etc/systemd/system/ha-kiosk-setup.service
 systemctl daemon-reload
 systemctl enable --now ha-kiosk-setup.service

@@ -55,6 +55,10 @@ TARGETS: dict[str, tuple[str, str, str, list[str]]] = {
         "scripts/static/setup.html", f"{INSTALL_ROOT}/scripts/static/setup.html", "644",
         ["ha-kiosk-setup.service"],
     ),
+    "setup-osk": (
+        "scripts/static/osk.js", f"{INSTALL_ROOT}/scripts/static/osk.js", "644",
+        ["ha-kiosk-setup.service"],
+    ),
     "camera-server": (
         "scripts/camera-stream-server.py", f"{INSTALL_ROOT}/scripts/camera-stream-server.py", "755",
         ["ha-kiosk-camera-stream.service"],

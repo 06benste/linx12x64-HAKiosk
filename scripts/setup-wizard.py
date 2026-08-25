@@ -7,15 +7,19 @@ this page (embedded) for later reconfiguration.
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
 import pathlib
+import socket
+import ssl
+import struct
 import subprocess
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse, urlsplit
 
 # Loopback-only by default, deliberately: this API has no auth at all (it
 # rewrites the tablet's HA URL/login, Wi-Fi credentials, and MQTT broker
@@ -129,6 +133,184 @@ def test_url(url: str) -> dict[str, Any]:
         return {"ok": True, "status": exc.code}
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": str(exc)}
+
+
+def _ha_post_json(url: str, payload: dict[str, Any], timeout: float) -> dict[str, Any]:
+    req = urllib.request.Request(
+        url, data=json.dumps(payload).encode(), method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as exc:
+        try:
+            return json.loads(exc.read().decode())
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            raise RuntimeError(f"HTTP {exc.code} from Home Assistant") from exc
+
+
+def _ha_login_flow_token(base: str, user: str, password: str, timeout: float = 10) -> str:
+    """Run HA's username/password login flow and exchange the result for an
+    access token — the same flow the HA frontend's login form uses, just
+    driven from Python instead of a browser. Only used to look up the
+    dashboard list; the tablet's own auto-login (content.js) is unrelated
+    and keeps filling the login form directly."""
+    client_id = base.rstrip("/") + "/"
+    flow = _ha_post_json(
+        base + "/auth/login_flow",
+        {"client_id": client_id, "handler": ["homeassistant", None], "redirect_uri": client_id},
+        timeout,
+    )
+    flow_id = flow.get("flow_id")
+    if not flow_id:
+        raise RuntimeError(flow.get("message") or "could not start login flow")
+
+    step = _ha_post_json(
+        base + f"/auth/login_flow/{flow_id}",
+        {"client_id": client_id, "username": user, "password": password},
+        timeout,
+    )
+    if step.get("type") != "create_entry":
+        errors = step.get("errors") or {}
+        raise RuntimeError(errors.get("base") or "login failed — check username and password")
+    code = step.get("result")
+
+    token_req = urllib.request.Request(
+        base + "/auth/token",
+        data=urlencode({"grant_type": "authorization_code", "code": code, "client_id": client_id}).encode(),
+        method="POST",
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    with urllib.request.urlopen(token_req, timeout=timeout) as resp:
+        token = json.loads(resp.read().decode())
+    access_token = token.get("access_token")
+    if not access_token:
+        raise RuntimeError(token.get("error") or "token exchange failed")
+    return access_token
+
+
+def _ws_frame_send(sock: socket.socket, payload: bytes, opcode: int = 0x1) -> None:
+    """Minimal RFC 6455 client frame writer — client->server frames must be
+    masked. No fragmentation support; every payload here (auth/JSON commands)
+    fits in one frame. Avoids pulling in a websockets dependency the tablet
+    doesn't otherwise need for this one-off dashboard lookup."""
+    mask_key = os.urandom(4)
+    length = len(payload)
+    if length <= 125:
+        header = struct.pack("!BB", 0x80 | opcode, 0x80 | length)
+    elif length <= 65535:
+        header = struct.pack("!BBH", 0x80 | opcode, 0x80 | 126, length)
+    else:
+        header = struct.pack("!BBQ", 0x80 | opcode, 0x80 | 127, length)
+    masked = bytes(b ^ mask_key[i % 4] for i, b in enumerate(payload))
+    sock.sendall(header + mask_key + masked)
+
+
+def _ws_frame_recv(sock: socket.socket, buf: bytearray) -> tuple[int, bytes]:
+    def read_n(n: int) -> bytes:
+        while len(buf) < n:
+            chunk = sock.recv(4096)
+            if not chunk:
+                raise RuntimeError("websocket closed unexpectedly")
+            buf.extend(chunk)
+        data = bytes(buf[:n])
+        del buf[:n]
+        return data
+
+    b1, b2 = read_n(2)
+    opcode = b1 & 0x0F
+    masked = bool(b2 & 0x80)
+    length = b2 & 0x7F
+    if length == 126:
+        length = struct.unpack("!H", read_n(2))[0]
+    elif length == 127:
+        length = struct.unpack("!Q", read_n(8))[0]
+    mask_key = read_n(4) if masked else b""
+    payload = read_n(length)
+    if masked:
+        payload = bytes(b ^ mask_key[i % 4] for i, b in enumerate(payload))
+    return opcode, payload
+
+
+def _ws_recv_json(sock: socket.socket, buf: bytearray) -> dict[str, Any]:
+    while True:
+        opcode, payload = _ws_frame_recv(sock, buf)
+        if opcode == 0x8:  # close
+            raise RuntimeError("Home Assistant closed the connection")
+        if opcode == 0x9:  # ping -> pong, keep waiting for the real reply
+            _ws_frame_send(sock, payload, opcode=0xA)
+            continue
+        if opcode == 0x1:  # text
+            return json.loads(payload.decode())
+
+
+def fetch_ha_dashboards(url: str, user: str, password: str, timeout: float = 10) -> list[dict[str, Any]]:
+    """Log into Home Assistant with the given credentials and return its
+    list of Lovelace dashboards via the frontend's own websocket API — there
+    is no REST endpoint for this. Requires a real HA user/password (not
+    Trusted Networks), since we need something to exchange for an access
+    token."""
+    parts = urlsplit(url)
+    if not parts.scheme or not parts.netloc:
+        raise RuntimeError("enter a valid Home Assistant URL first")
+    base = f"{parts.scheme}://{parts.netloc}"
+    access_token = _ha_login_flow_token(base, user, password, timeout)
+
+    host = parts.hostname
+    port = parts.port or (443 if parts.scheme == "https" else 80)
+    raw = socket.create_connection((host, port), timeout=timeout)
+    sock: socket.socket | ssl.SSLSocket = raw
+    if parts.scheme == "https":
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE  # tablets on a LAN mostly talk to HA over self-signed/plain http
+        sock = ctx.wrap_socket(raw, server_hostname=host)
+    sock.settimeout(timeout)
+
+    try:
+        key = base64.b64encode(os.urandom(16)).decode()
+        handshake = (
+            f"GET /api/websocket HTTP/1.1\r\n"
+            f"Host: {host}:{port}\r\n"
+            "Upgrade: websocket\r\n"
+            "Connection: Upgrade\r\n"
+            f"Sec-WebSocket-Key: {key}\r\n"
+            "Sec-WebSocket-Version: 13\r\n"
+            "\r\n"
+        )
+        sock.sendall(handshake.encode())
+        resp = b""
+        while b"\r\n\r\n" not in resp:
+            chunk = sock.recv(4096)
+            if not chunk:
+                raise RuntimeError("connection closed during websocket handshake")
+            resp += chunk
+        head, _, rest = resp.partition(b"\r\n\r\n")
+        if b" 101 " not in head.split(b"\r\n", 1)[0]:
+            raise RuntimeError("Home Assistant rejected the websocket handshake")
+        buf = bytearray(rest)
+
+        greeting = _ws_recv_json(sock, buf)
+        if greeting.get("type") != "auth_required":
+            raise RuntimeError("unexpected response from Home Assistant's websocket API")
+        _ws_frame_send(sock, json.dumps({"type": "auth", "access_token": access_token}).encode())
+        auth_result = _ws_recv_json(sock, buf)
+        if auth_result.get("type") != "auth_ok":
+            raise RuntimeError(auth_result.get("message") or "websocket authentication failed")
+        _ws_frame_send(sock, json.dumps({"id": 1, "type": "lovelace/dashboards/list"}).encode())
+        result = _ws_recv_json(sock, buf)
+        if not result.get("success"):
+            raise RuntimeError((result.get("error") or {}).get("message") or "could not list dashboards")
+    finally:
+        sock.close()
+
+    dashboards = [
+        {"title": d.get("title") or d.get("url_path") or "Untitled", "url_path": d.get("url_path")}
+        for d in (result.get("result") or [])
+    ]
+    dashboards.insert(0, {"title": "Default dashboard", "url_path": None})
+    return dashboards
 
 
 def wifi_scan() -> list[dict[str, Any]]:
@@ -325,6 +507,19 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _js(self, path: pathlib.Path) -> None:
+        if not path.exists():
+            self._json(404, {"ok": False, "error": f"missing: {path}"})
+            return
+        data = path.read_bytes()
+        self.send_response(200)
+        self._cors()
+        self.send_header("Content-Type", "application/javascript; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
     def _read_json(self) -> dict[str, Any]:
         length = int(self.headers.get("Content-Length") or 0)
         if length <= 0:
@@ -347,6 +542,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path in ("/", "/setup"):
             self._html(STATIC_DIR / "setup.html")
+            return
+        if path == "/osk.js":
+            self._js(STATIC_DIR / "osk.js")
             return
         if path == "/api/current":
             self._json(
@@ -374,6 +572,24 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {"ok": False, "error": "URL must start with http:// or https://"})
                 return
             self._json(200, test_url(url))
+            return
+
+        if path == "/api/ha-dashboards":
+            url = str(body.get("url", "")).strip()
+            user = str(body.get("user", "")).strip()
+            password = str(body.get("pass", "")).strip()
+            if not url.startswith(("http://", "https://")):
+                self._json(400, {"ok": False, "error": "URL must start with http:// or https://"})
+                return
+            if not user or not password:
+                self._json(200, {"ok": False, "error": "Enter username and password above first, then fetch"})
+                return
+            try:
+                dashboards = fetch_ha_dashboards(url, user, password)
+            except Exception as exc:  # noqa: BLE001
+                self._json(200, {"ok": False, "error": str(exc)})
+                return
+            self._json(200, {"ok": True, "dashboards": dashboards})
             return
 
         if path == "/api/save-ha":

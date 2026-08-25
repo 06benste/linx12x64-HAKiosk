@@ -337,7 +337,7 @@
     </aside>
     <button class="tab" type="button" aria-label="Open tablet controls" title="Controls">‹</button>
     <div class="cam-overlay" id="cam-overlay" hidden>
-      <button class="overlay-close" id="overlay-close" type="button">✕ Exit to kiosk screen</button>
+      <button class="overlay-close" id="overlay-close" type="button">X Exit to kiosk screen</button>
       <div class="overlay-status hidden" id="overlay-status"></div>
       <iframe title="Tablet Setup" allow="autoplay"></iframe>
     </div>
