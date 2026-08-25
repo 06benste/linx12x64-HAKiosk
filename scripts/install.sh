@@ -18,59 +18,63 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 HA_URL="${1:-}"
 SKIP_CAMERA="${SKIP_CAMERA:-}"
 
-echo "== 1/13: Wi-Fi firmware =="
+echo "== 1/14: Wi-Fi firmware =="
 bash "$ROOT/01-wifi-firmware.sh"
 
 echo
-echo "== 2/13: Kiosk install =="
+echo "== 2/14: Kiosk install =="
 bash "$ROOT/02-install-kiosk.sh" "$HA_URL"
 
 echo
-echo "== 3/13: GPU stabilizers =="
+echo "== 3/14: GPU stabilizers =="
 bash "$ROOT/03-fix-gpu.sh"
 
 echo
-echo "== 4/13: Sleep prevention =="
+echo "== 4/14: Sleep prevention =="
 bash "$ROOT/06-no-sleep.sh"
 
 echo
-echo "== 5/13: Power drawer backend =="
+echo "== 5/14: Power drawer backend =="
 bash "$ROOT/07-power-drawer.sh"
 
 echo
-echo "== 6/13: Charger fix =="
+echo "== 6/14: Charger fix =="
 bash "$ROOT/10-fix-charger.sh"
 
 echo
-echo "== 7/13: Battery guard (clean shutdown at 1%) =="
+echo "== 7/14: Battery guard (clean shutdown at 1%) =="
 bash "$ROOT/11-battery-guard.sh"
 
 echo
-echo "== 8/13: Guardian (low-battery dim, thermal camera cutoff) =="
+echo "== 8/14: Guardian (low-battery dim, thermal camera cutoff) =="
 bash "$ROOT/12-guardian.sh"
 
 echo
-echo "== 9/13: Shutdown reliability (bounded watchdog reset on hang) =="
+echo "== 9/14: Shutdown reliability (bounded watchdog reset on hang) =="
 bash "$ROOT/13-shutdown-reliability.sh"
 
 echo
-echo "== 10/13: Auto-rotate daemon (off by default — enable from Setup > General) =="
+echo "== 10/14: Auto-rotate daemon (off by default — enable from Setup > General) =="
 bash "$ROOT/14-auto-rotate.sh"
 
 echo
-echo "== 11/13: Self-update worker (check/apply updates from Setup > Updates) =="
+echo "== 11/14: Self-update worker (check/apply updates from Setup > Updates) =="
 bash "$ROOT/15-self-update.sh"
 
 echo
+echo "== 12/14: Daily update-check timer (06:00 — feeds the power drawer's notification bubble) =="
+bash "$ROOT/16-update-check-timer.sh"
+
+echo
 if [[ -n "$SKIP_CAMERA" ]]; then
-  echo "== 12/13: Camera — SKIPPED (SKIP_CAMERA set) =="
+  echo "== 13/14: Camera — SKIPPED (SKIP_CAMERA set) =="
   echo "Run it later with: sudo bash $ROOT/09-install-camera.sh"
 else
-  echo "== 12/13: Camera =="
+  echo "== 13/14: Camera =="
   echo "Building the kernel driver — needs network access, please wait."
   bash "$ROOT/09-install-camera.sh" || echo "WARNING: camera setup failed — the rest of the kiosk is unaffected. Re-run: sudo bash $ROOT/09-install-camera.sh"
 fi
 
 echo
-echo "== 13/13: Done =="
+echo "== 14/14: Done =="
 echo "All done. Reboot to start the kiosk: sudo reboot"

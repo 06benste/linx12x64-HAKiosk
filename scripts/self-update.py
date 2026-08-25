@@ -33,6 +33,13 @@ INSTALL = pathlib.Path("/opt/ha-kiosk")
 VERSION_FILE = INSTALL / "version"
 UPDATE_STATUS_FILE = INSTALL / "update-status.json"
 OS_UPDATE_STATUS_FILE = INSTALL / "os-update-status.json"
+# Merged { "kiosk": {...}, "os": {...}, "checked_at": ... } cache that the
+# power drawer's notification bubble reads (via power-api.py's
+# /update-available) — written by every successful `check`/`os-check`, not
+# just the daily timer, so a manual "Check for updates" tap and applying an
+# update both clear/refresh the bubble immediately instead of waiting for
+# the next scheduled check.
+UPDATE_AVAILABLE_FILE = INSTALL / "update-available.json"
 LOG_DIR = INSTALL / "logs"
 UPDATE_LOG = LOG_DIR / "self-update.log"
 OS_UPDATE_LOG = LOG_DIR / "os-update.log"
@@ -71,22 +78,36 @@ def fetch_latest_release() -> dict:
         return json.loads(resp.read().decode())
 
 
+def _merge_update_available(section: str, data: dict) -> None:
+    try:
+        existing = json.loads(UPDATE_AVAILABLE_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        existing = {}
+    existing[section] = data
+    existing["checked_at"] = time.time()
+    _write_json(UPDATE_AVAILABLE_FILE, existing)
+
+
 def cmd_check() -> None:
     current = current_version()
     try:
         rel = fetch_latest_release()
     except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
+        # Deliberately not merged into UPDATE_AVAILABLE_FILE — a transient
+        # network blip shouldn't flip a real "update available" badge off.
         print(json.dumps({"ok": False, "error": str(exc), "current": current}))
         return
     latest = rel.get("tag_name") or "unknown"
-    print(json.dumps({
+    result = {
         "ok": True,
         "current": current,
         "latest": latest,
         "update_available": latest != current and latest != "unknown",
         "notes": rel.get("body") or "",
         "published_at": rel.get("published_at") or "",
-    }))
+    }
+    _merge_update_available("kiosk", result)
+    print(json.dumps(result))
 
 
 def cmd_apply(include_camera: bool) -> None:
@@ -172,6 +193,7 @@ def cmd_apply(include_camera: bool) -> None:
             return
 
     VERSION_FILE.write_text(tag + "\n", encoding="utf-8")
+    _merge_update_available("kiosk", {"ok": True, "current": tag, "latest": tag, "update_available": False, "notes": "", "published_at": ""})
     _log(UPDATE_LOG, f"updated to {tag}, restarting kiosk session")
     subprocess.run(["systemctl", "restart", "getty@tty1.service"], check=False)
     status("done", version=tag, message=f"Updated to {tag}")
@@ -180,6 +202,7 @@ def cmd_apply(include_camera: bool) -> None:
 def cmd_os_check() -> None:
     proc = subprocess.run(["apt-get", "update", "-qq"], capture_output=True, text=True, timeout=120)
     if proc.returncode != 0:
+        # As in cmd_check: don't touch UPDATE_AVAILABLE_FILE on failure.
         print(json.dumps({"ok": False, "error": proc.stderr.strip()[-500:]}))
         return
     proc2 = subprocess.run(["apt", "list", "--upgradable"], capture_output=True, text=True, timeout=60)
@@ -187,7 +210,15 @@ def cmd_os_check() -> None:
         l for l in proc2.stdout.splitlines()
         if l.strip() and "/" in l and not l.startswith("Listing")
     ]
-    print(json.dumps({"ok": True, "upgradable_count": len(lines)}))
+    packages = [l.split("/", 1)[0] for l in lines]
+    result = {
+        "ok": True,
+        "upgradable_count": len(lines),
+        "packages": packages,
+        "update_available": len(lines) > 0,
+    }
+    _merge_update_available("os", result)
+    print(json.dumps(result))
 
 
 def cmd_os_apply() -> None:
@@ -240,6 +271,7 @@ def cmd_os_apply() -> None:
     # DKMS module — not independently verified on this hardware.
     reboot_recommended = bool(newest_kernel_pkg) and before_kernel not in newest_kernel_pkg
 
+    _merge_update_available("os", {"ok": True, "upgradable_count": 0, "packages": [], "update_available": False})
     status("done", message="Debian packages updated", reboot_recommended=reboot_recommended)
 
 

@@ -552,6 +552,7 @@
         <button type="button" class="btn secondary" id="btn-os-update-check">Check for Debian updates</button>
       </div>
       <div id="os-update-available-box" style="display:none">
+        <div class="hint" id="os-update-notes"></div>
         <div class="hint">Upgrades already-installed packages only — nothing is removed or newly added. May include a kernel update.</div>
         <button type="button" class="btn warn" id="btn-os-update-apply">Update Debian packages</button>
       </div>
@@ -972,6 +973,7 @@
     const osUpdateInfo = document.getElementById("os-update-info");
     const btnOsUpdateCheck = document.getElementById("btn-os-update-check");
     const osUpdateAvailableBox = document.getElementById("os-update-available-box");
+    const osUpdateNotes = document.getElementById("os-update-notes");
     const btnOsUpdateApply = document.getElementById("btn-os-update-apply");
     const osRebootBanner = document.getElementById("os-reboot-banner");
     const btnOsUpdateReboot = document.getElementById("btn-os-update-reboot");
@@ -1101,7 +1103,12 @@
         osUpdateInfo.innerHTML = `
           <div class="primary"><span class="dot ${count > 0 ? "warn" : ""}"></span><span>${count > 0 ? count + " package" + (count === 1 ? "" : "s") + " available" : "Up to date"}</span></div>
         `;
-        if (count > 0) osUpdateAvailableBox.style.display = "block";
+        if (count > 0) {
+          const pkgs = Array.isArray(data.packages) ? data.packages : [];
+          const shown = pkgs.slice(0, 40).join(", ");
+          osUpdateNotes.textContent = shown ? `Packages: ${shown}${pkgs.length > 40 ? ", …" : ""}` : "";
+          osUpdateAvailableBox.style.display = "block";
+        }
       } catch (err) {
         osUpdateInfo.innerHTML = `<div class="meta">Couldn't check: ${escapeHtml(String(err.message || err))}</div>`;
       }

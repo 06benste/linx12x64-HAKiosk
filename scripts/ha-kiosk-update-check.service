@@ -1,0 +1,9 @@
+[Unit]
+Description=Check for kiosk software and Debian updates (feeds the power drawer's notification bubble)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/ha-kiosk/scripts/self-update.py check
+ExecStart=/usr/bin/python3 /opt/ha-kiosk/scripts/self-update.py os-check

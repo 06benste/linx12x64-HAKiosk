@@ -388,6 +388,11 @@ def detach(cmd: list[str]) -> None:
 SELF_UPDATE_SCRIPT = "/opt/ha-kiosk/scripts/self-update.py"
 UPDATE_STATUS_FILE = INSTALL_ROOT / "update-status.json"
 OS_UPDATE_STATUS_FILE = INSTALL_ROOT / "os-update-status.json"
+# Written by self-update.py's check/os-check (both the daily timer and the
+# Updates tab's manual "Check" buttons) — the power drawer polls this cheap
+# read-only endpoint to decide whether to show its notification bubble,
+# without triggering a GitHub/apt check itself.
+UPDATE_AVAILABLE_FILE = INSTALL_ROOT / "update-available.json"
 
 
 def _read_status_file(path: pathlib.Path) -> dict[str, Any]:
@@ -419,6 +424,13 @@ def update_apply(include_camera: bool) -> dict[str, Any]:
 
 def update_status() -> dict[str, Any]:
     return _read_status_file(UPDATE_STATUS_FILE)
+
+
+def update_available_summary() -> dict[str, Any]:
+    try:
+        return json.loads(UPDATE_AVAILABLE_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
 
 
 def os_update_check() -> dict[str, Any]:
@@ -912,6 +924,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/os-update-status":
             self._json(200, {"ok": True, **os_update_status()})
+            return
+        if path == "/update-available":
+            self._json(200, {"ok": True, **update_available_summary()})
             return
         self._json(404, {"ok": False, "error": "not found"})
 

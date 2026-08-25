@@ -43,6 +43,17 @@
         justify-content: center;
       }
       .tab:active { background: rgba(18, 22, 26, 0.98); }
+      .tab.has-update::after {
+        content: "";
+        position: absolute;
+        top: 10px;
+        right: 8px;
+        width: 11px;
+        height: 11px;
+        border-radius: 50%;
+        background: #e05a4f;
+        border: 2px solid rgba(18, 22, 26, 0.92);
+      }
       .panel {
         pointer-events: auto;
         position: fixed;
@@ -360,13 +371,18 @@
   let open = false;
   let busy = false;
   let statusTimer = null;
+  let updateAvailable = false;
   const SETUP_BASE = "http://127.0.0.1:17825";
   // Home Assistant / Wi-Fi / MQTT / Cameras / General all live as tabs on
   // one setup page now — this is the drawer's single entry point into all
   // of it. Opens straight to General (camera/charge-LED/rotation) since
   // that's what this button is used for day-to-day now that those moved
-  // out of the drawer itself; the other tabs are one click away.
-  const SETUP_URL = SETUP_BASE + "/setup?embed=1&section=general";
+  // out of the drawer itself; the other tabs are one click away — except
+  // when the update bubble is showing, where jumping straight to Updates
+  // saves the detour.
+  function setupUrl() {
+    return SETUP_BASE + "/setup?embed=1&section=" + (updateAvailable ? "updates" : "general");
+  }
 
   // Full-screen overlay/iframe used to show the setup page without leaving
   // the kiosk. "done" messages from inside it close the overlay.
@@ -434,7 +450,7 @@
     // health check only needs to cover setup-wizard.py itself — General's
     // own toggles always work via power-api regardless of whether the
     // camera stream service happens to be running.
-    openOverlay(SETUP_URL, "ha-kiosk-setup-done", SETUP_BASE);
+    openOverlay(setupUrl(), "ha-kiosk-setup-done", SETUP_BASE);
   });
 
   function fmtUptime(sec) {
@@ -637,5 +653,25 @@
       }
     }, 80);
   });
+
+  // Update-available bubble on the closed tab. Reads the cache
+  // self-update.py's check/os-check write to (fed by both the daily 06:00
+  // timer and a manual "Check for updates" tap in Setup > Updates) —
+  // cheap, no GitHub/apt call of its own, so this can poll often.
+  async function pollUpdateAvailable() {
+    try {
+      const res = await fetch(POWER_BASE + "/update-available", { cache: "no-store" });
+      const data = await res.json();
+      const kioskAvail = !!(data.kiosk && data.kiosk.update_available);
+      const osAvail = !!(data.os && data.os.update_available);
+      updateAvailable = kioskAvail || osAvail;
+      tab.classList.toggle("has-update", updateAvailable);
+    } catch (_) {
+      // Leave the last known state — a transient fetch failure shouldn't
+      // flicker the badge off.
+    }
+  }
+  pollUpdateAvailable();
+  setInterval(pollUpdateAvailable, 5 * 60 * 1000);
 
 })();
