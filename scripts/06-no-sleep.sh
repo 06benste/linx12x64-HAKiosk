@@ -42,7 +42,7 @@ After=multi-user.target
 
 [Service]
 Type=oneshot
-ExecStart=/bin/sh -c 'setterm -blank 0 -powerdown 0 -powersave off </dev/tty1 2>/dev/null || true; echo 0 > /sys/module/kernel/parameters/consoleblank 2>/dev/null || true'
+ExecStart=/bin/sh -c 'setterm -blank 0 -powerdown 0 -powersave off </dev/tty1 2>/dev/null || true'
 RemainAfterExit=yes
 
 [Install]
@@ -128,9 +128,11 @@ systemctl daemon-reload
 systemctl start ha-kiosk-noblank.service 2>/dev/null || true
 systemctl start ha-kiosk-inhibit-sleep.service 2>/dev/null || true
 
-# Apply blanking now
+# Apply blanking now. (Not also writing /sys/module/kernel/parameters/
+# consoleblank here — confirmed on this hardware's kernel that parameter is
+# mode 0444, unwritable even by root; setterm above is what actually
+# controls VT blanking and already succeeds.)
 setterm -blank 0 -powerdown 0 -powersave off </dev/tty1 2>/dev/null || true
-echo 0 >/sys/module/kernel/parameters/consoleblank 2>/dev/null || true
 
 echo
 echo "Sleep / blanking disabled."
