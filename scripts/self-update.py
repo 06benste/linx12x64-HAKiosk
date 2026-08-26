@@ -21,10 +21,12 @@ import argparse
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -78,6 +80,96 @@ def fetch_latest_release() -> dict:
         return json.loads(resp.read().decode())
 
 
+STEP_RE = re.compile(r"^== (\d+)/(\d+):")
+
+
+def _run_streaming(
+    cmd: list[str], *, status_cb, log_path: pathlib.Path, timeout: float, env: dict | None = None,
+) -> tuple[int, bool, str, list[int] | None]:
+    """Run cmd with merged stdout+stderr streamed line-by-line into log_path
+    and, throttled to 2/sec, into status_cb(tail, step) — so a poller can
+    show live progress instead of a silent multi-minute black box (this is
+    what install.sh/apt-get upgrade both were before: subprocess.run()
+    capturing everything and only surfacing it after the fact).
+
+    step is [n, total] parsed from the most recent "== n/total: ..." marker
+    seen in the output (install.sh prints these; apt output has none, so it
+    stays None there) — kept as its own field rather than something the
+    caller re-parses from the tail text, since the marker line can scroll
+    out of the tail window on a chatty step while still being the most
+    recent one seen.
+
+    A background timer kills the process after `timeout` even if it's
+    produced no output at all — a hang with no output would never trip a
+    plain "check elapsed time between lines" loop, since that only gets a
+    chance to run when a new line actually arrives.
+
+    Returns (returncode, timed_out, log_tail, step).
+    """
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, env=env,
+        )
+    except OSError as exc:
+        return 1, False, f"couldn't start: {exc}", None
+
+    timed_out = {"flag": False}
+
+    def _kill() -> None:
+        timed_out["flag"] = True
+        proc.kill()
+
+    timer = threading.Timer(timeout, _kill)
+    timer.start()
+    tail: list[str] = []
+    step: list[int] | None = None
+    last_flush = 0.0
+    try:
+        with log_path.open("a", encoding="utf-8") as lf:
+            for line in proc.stdout:
+                line = line.rstrip("\n")
+                lf.write(line + "\n")
+                tail.append(line)
+                if len(tail) > 200:
+                    del tail[: len(tail) - 200]
+                m = STEP_RE.match(line)
+                if m:
+                    step = [int(m.group(1)), int(m.group(2))]
+                now = time.monotonic()
+                if now - last_flush > 0.5:
+                    status_cb("\n".join(tail[-40:]), step)
+                    last_flush = now
+        returncode = proc.wait()
+    finally:
+        timer.cancel()
+    tail_text = "\n".join(tail[-40:])
+    status_cb(tail_text, step)
+    return returncode, timed_out["flag"], tail_text, step
+
+
+def _is_busy(status_file: pathlib.Path, active_states: set[str], stale_after: float = 3600) -> bool:
+    """True if status_file's own last-recorded state is one of the given
+    "in progress" states and recent — used to keep a kiosk-software apply
+    and a Debian apply from ever running at the same time. Both eventually
+    shell out to apt, and running two apt operations at once is exactly
+    what produced the "Could not get lock /var/lib/apt/lists/lock" failure
+    seen in a real log — a failure that then needed a manual retry.
+    `stale_after` ignores a stuck "in progress" state left behind by a
+    crash, so that doesn't permanently wedge future runs."""
+    try:
+        data = json.loads(status_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if data.get("state") not in active_states:
+        return False
+    return (time.time() - (data.get("ts") or 0)) < stale_after
+
+
+APPLY_ACTIVE_STATES = {"checking", "downloading", "extracting", "installing"}
+OS_APPLY_ACTIVE_STATES = {"updating", "upgrading"}
+
+
 def _merge_update_available(section: str, data: dict) -> None:
     try:
         existing = json.loads(UPDATE_AVAILABLE_FILE.read_text(encoding="utf-8"))
@@ -113,6 +205,13 @@ def cmd_check() -> None:
 def cmd_apply(include_camera: bool) -> None:
     def status(state: str, **extra: object) -> None:
         _write_json(UPDATE_STATUS_FILE, {"state": state, "ts": time.time(), **extra})
+
+    if _is_busy(UPDATE_STATUS_FILE, APPLY_ACTIVE_STATES):
+        status("failed", message="An update is already in progress")
+        return
+    if _is_busy(OS_UPDATE_STATUS_FILE, OS_APPLY_ACTIVE_STATES):
+        status("failed", message="A Debian package update is running — try again once it finishes")
+        return
 
     status("checking")
     try:
@@ -171,35 +270,51 @@ def cmd_apply(include_camera: bool) -> None:
             status("failed", message="scripts/install.sh missing from release archive")
             return
 
-        status("installing", version=tag)
+        status("installing", version=tag, log="", step=None)
         env = os.environ.copy()
         if not include_camera:
             env["SKIP_CAMERA"] = "1"
         _log(UPDATE_LOG, f"running install.sh (include_camera={include_camera})")
-        try:
-            proc = subprocess.run(
-                ["bash", str(install_sh)],
-                capture_output=True, text=True, timeout=1800, env=env,
+        returncode, timed_out, log_tail, step = _run_streaming(
+            ["bash", str(install_sh)],
+            status_cb=lambda tail, step: status("installing", version=tag, log=tail, step=step),
+            log_path=UPDATE_LOG,
+            timeout=1800,
+            env=env,
+        )
+        if timed_out:
+            status(
+                "failed",
+                message="Install step timed out — try again, or include_camera=false if it was rebuilding the camera driver",
+                log=log_tail, step=step,
             )
-        except subprocess.TimeoutExpired:
-            _log(UPDATE_LOG, "install.sh timed out after 30 minutes")
-            status("failed", message="Install step timed out — try again, or include_camera=false if it was rebuilding the camera driver")
             return
-        _log(UPDATE_LOG, proc.stdout[-4000:])
-        if proc.stderr:
-            _log(UPDATE_LOG, "stderr: " + proc.stderr[-2000:])
-        if proc.returncode != 0:
-            status("failed", message=f"install.sh exited {proc.returncode} — see {UPDATE_LOG}")
+        if returncode != 0:
+            status("failed", message=f"install.sh exited {returncode} — see {UPDATE_LOG}", log=log_tail, step=step)
             return
 
     VERSION_FILE.write_text(tag + "\n", encoding="utf-8")
     _merge_update_available("kiosk", {"ok": True, "current": tag, "latest": tag, "update_available": False, "notes": "", "published_at": ""})
+    status("done", version=tag, message=f"Updated to {tag}")
+    # Give the Updates tab's poll (every 3s) a chance to actually render
+    # "done" before the display reloads out from under it — this restart
+    # kills and relaunches the very Chromium tab showing that status, so
+    # without this pause the update visibly succeeds but nobody ever sees
+    # confirmation of that, which was leading to people re-running it
+    # "just in case" it hadn't worked.
+    time.sleep(5)
     _log(UPDATE_LOG, f"updated to {tag}, restarting kiosk session")
     subprocess.run(["systemctl", "restart", "getty@tty1.service"], check=False)
-    status("done", version=tag, message=f"Updated to {tag}")
 
 
 def cmd_os_check() -> None:
+    if _is_busy(UPDATE_STATUS_FILE, APPLY_ACTIVE_STATES) or _is_busy(OS_UPDATE_STATUS_FILE, OS_APPLY_ACTIVE_STATES):
+        # apt-get update also takes the apt lock — skip rather than collide
+        # with an apply already using it (this is what produced "Could not
+        # get lock /var/lib/apt/lists/lock" before this guard existed). The
+        # daily timer's next run, or a manual re-check, picks it up fine.
+        print(json.dumps({"ok": False, "error": "An update is already in progress — try again shortly"}))
+        return
     proc = subprocess.run(["apt-get", "update", "-qq"], capture_output=True, text=True, timeout=120)
     if proc.returncode != 0:
         # As in cmd_check: don't touch UPDATE_AVAILABLE_FILE on failure.
@@ -225,6 +340,13 @@ def cmd_os_apply() -> None:
     def status(state: str, **extra: object) -> None:
         _write_json(OS_UPDATE_STATUS_FILE, {"state": state, "ts": time.time(), **extra})
 
+    if _is_busy(OS_UPDATE_STATUS_FILE, OS_APPLY_ACTIVE_STATES):
+        status("failed", message="A Debian package update is already in progress")
+        return
+    if _is_busy(UPDATE_STATUS_FILE, APPLY_ACTIVE_STATES):
+        status("failed", message="A kiosk-software update is running — try again once it finishes")
+        return
+
     before_kernel = subprocess.run(
         ["uname", "-r"], capture_output=True, text=True
     ).stdout.strip()
@@ -237,7 +359,7 @@ def cmd_os_apply() -> None:
         status("failed", message="apt-get update failed")
         return
 
-    status("upgrading")
+    status("upgrading", log="")
     env = os.environ.copy()
     env["DEBIAN_FRONTEND"] = "noninteractive"
     # Deliberately `upgrade`, not `full-upgrade`/`dist-upgrade` — never
@@ -245,19 +367,18 @@ def cmd_os_apply() -> None:
     # installed. This tablet's GPU/camera/audio stack is all fragile,
     # hand-tuned, hardware-specific software; a conservative package
     # upgrade is much less likely to disturb any of it than a full upgrade.
-    try:
-        proc = subprocess.run(
-            ["apt-get", "upgrade", "-y"], capture_output=True, text=True, timeout=1800, env=env,
-        )
-    except subprocess.TimeoutExpired:
-        _log(OS_UPDATE_LOG, "apt-get upgrade timed out after 30 minutes")
-        status("failed", message="Upgrade timed out — try again")
+    returncode, timed_out, log_tail, _step = _run_streaming(
+        ["apt-get", "upgrade", "-y"],
+        status_cb=lambda tail, _step: status("upgrading", log=tail),
+        log_path=OS_UPDATE_LOG,
+        timeout=1800,
+        env=env,
+    )
+    if timed_out:
+        status("failed", message="Upgrade timed out — try again", log=log_tail)
         return
-    _log(OS_UPDATE_LOG, proc.stdout[-4000:])
-    if proc.stderr:
-        _log(OS_UPDATE_LOG, "stderr: " + proc.stderr[-2000:])
-    if proc.returncode != 0:
-        status("failed", message=f"apt-get upgrade exited {proc.returncode} — see {OS_UPDATE_LOG}")
+    if returncode != 0:
+        status("failed", message=f"apt-get upgrade exited {returncode} — see {OS_UPDATE_LOG}", log=log_tail)
         return
 
     newest_kernel_proc = subprocess.run(

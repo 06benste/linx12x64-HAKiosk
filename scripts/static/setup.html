@@ -145,6 +145,26 @@
     .status { min-height: 1.3em; font-size: 13px; color: #e2c07a; }
     .status.ok { color: var(--ok); }
     .status.bad { color: #ffb0a8; }
+    .progress-wrap { display: grid; gap: 4px; margin-top: 6px; }
+    .progress-bar { height: 8px; border-radius: 999px; background: #10141a; overflow: hidden; }
+    .progress-fill { height: 100%; width: 0%; background: var(--accent); transition: width 0.3s ease; }
+    .progress-label { font-size: 11px; color: var(--muted); }
+    .update-log {
+      margin: 6px 0 0;
+      max-height: 180px;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      background: #0a0d11;
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+      font-size: 11px;
+      line-height: 1.45;
+      color: #9aa3ad;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
     details.help {
       border-top: 1px solid rgba(255,255,255,0.08);
       margin-top: 4px;
@@ -543,6 +563,11 @@
         <button type="button" class="btn" id="btn-update-apply">Update now</button>
       </div>
       <div class="status" id="update-progress" aria-live="polite"></div>
+      <div class="progress-wrap" id="update-progress-wrap" style="display:none">
+        <div class="progress-bar"><div class="progress-fill" id="update-progress-fill"></div></div>
+        <div class="progress-label" id="update-progress-label"></div>
+      </div>
+      <pre class="update-log" id="update-log" style="display:none"></pre>
 
       <div class="section-heading">Debian system updates</div>
       <div class="wifi-current" id="os-update-info">
@@ -559,6 +584,7 @@
       <div id="os-reboot-banner" class="hint" style="display:none;color:var(--warn)">A reboot is recommended to finish applying these updates.</div>
       <button type="button" class="btn secondary" id="btn-os-update-reboot" style="display:none">Restart tablet now</button>
       <div class="status" id="os-update-progress" aria-live="polite"></div>
+      <pre class="update-log" id="os-update-log" style="display:none"></pre>
     </div>
   </div>
 
@@ -969,6 +995,10 @@
     const updateIncludeCamera = document.getElementById("update-include-camera");
     const btnUpdateApply = document.getElementById("btn-update-apply");
     const updateProgress = document.getElementById("update-progress");
+    const updateProgressWrap = document.getElementById("update-progress-wrap");
+    const updateProgressFill = document.getElementById("update-progress-fill");
+    const updateProgressLabel = document.getElementById("update-progress-label");
+    const updateLog = document.getElementById("update-log");
 
     const osUpdateInfo = document.getElementById("os-update-info");
     const btnOsUpdateCheck = document.getElementById("btn-os-update-check");
@@ -978,6 +1008,14 @@
     const osRebootBanner = document.getElementById("os-reboot-banner");
     const btnOsUpdateReboot = document.getElementById("btn-os-update-reboot");
     const osUpdateProgress = document.getElementById("os-update-progress");
+    const osUpdateLog = document.getElementById("os-update-log");
+
+    function showLog(el, text) {
+      if (!text) { el.style.display = "none"; return; }
+      el.style.display = "block";
+      el.textContent = text;
+      el.scrollTop = el.scrollHeight;
+    }
 
     let updatePollTimer = null;
     let osUpdatePollTimer = null;
@@ -1046,6 +1084,9 @@
       if (!window.confirm("Update the kiosk software now? The tablet will briefly reload its display when done.")) return;
       btnUpdateApply.disabled = true;
       setStatus(updateProgress, "Starting update…");
+      updateProgressWrap.style.display = "none";
+      updateProgressFill.style.width = "0%";
+      showLog(updateLog, "");
       try {
         const res = await fetch(CAM_POWER_BASE + "/update-apply", {
           method: "POST",
@@ -1068,16 +1109,30 @@
           const res = await fetch(CAM_POWER_BASE + "/update-status", { cache: "no-store" });
           const data = await res.json();
           const state = data.state || "idle";
+          if (data.log) showLog(updateLog, data.log);
+          if (Array.isArray(data.step) && data.step.length === 2 && data.step[1] > 0) {
+            const [n, total] = data.step;
+            updateProgressWrap.style.display = "grid";
+            updateProgressFill.style.width = Math.round((n / total) * 100) + "%";
+            updateProgressLabel.textContent = `install.sh step ${n} of ${total}`;
+          }
           if (state === "checking") setStatus(updateProgress, "Checking for the latest release…");
           else if (state === "downloading") setStatus(updateProgress, `Downloading ${data.version || ""}…`);
           else if (state === "extracting") setStatus(updateProgress, "Extracting…");
           else if (state === "installing") setStatus(updateProgress, "Installing — this can take a few minutes…");
           else if (state === "done") {
             setStatus(updateProgress, data.message || "Updated", "ok");
+            updateProgressFill.style.width = "100%";
             clearInterval(updatePollTimer);
             updatePollTimer = null;
             btnUpdateApply.disabled = false;
-            updateCheckFn();
+            // Delayed, not immediate: the tablet itself pauses ~5s after
+            // writing "done" before reloading its own display (so this
+            // success message + log are actually visible before that kill
+            // — see self-update.py's cmd_apply), and a remote/dev viewer
+            // whose page survives still gets the version box refreshed
+            // shortly after, without racing the success message off screen.
+            setTimeout(updateCheckFn, 6000);
           } else if (state === "failed") {
             setStatus(updateProgress, data.message || "Update failed", "bad");
             clearInterval(updatePollTimer);
@@ -1121,6 +1176,7 @@
       if (!window.confirm("Update Debian packages now? This only upgrades what's already installed (nothing removed or newly added), but may need a reboot afterward and is riskier than the kiosk-software update.")) return;
       btnOsUpdateApply.disabled = true;
       setStatus(osUpdateProgress, "Starting update…");
+      showLog(osUpdateLog, "");
       try {
         const res = await fetch(CAM_POWER_BASE + "/os-update-apply", { method: "POST" });
         const data = await res.json();
@@ -1139,6 +1195,7 @@
           const res = await fetch(CAM_POWER_BASE + "/os-update-status", { cache: "no-store" });
           const data = await res.json();
           const state = data.state || "idle";
+          if (data.log) showLog(osUpdateLog, data.log);
           if (state === "updating") setStatus(osUpdateProgress, "Refreshing package index…");
           else if (state === "upgrading") setStatus(osUpdateProgress, "Upgrading packages — this can take a while…");
           else if (state === "done") {
