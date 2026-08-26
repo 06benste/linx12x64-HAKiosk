@@ -11,6 +11,14 @@ ExecStartPre=-/sbin/modprobe i2c-dev
 ExecStart=/usr/bin/python3 /opt/ha-kiosk/scripts/power-api.py
 Restart=on-failure
 RestartSec=2
+# Default KillMode=control-group would kill self-update.py apply/os-apply
+# too on any restart of this service (they're launched detached via
+# subprocess.Popen(..., start_new_session=True), but that only escapes the
+# session/process-group, not systemd's cgroup-based tracking) — silently
+# killing a multi-minute update mid-run with no chance to record "failed",
+# leaving the Updates tab stuck showing "in progress" indefinitely. Restart
+# only the tracked main process; let detached children keep running.
+KillMode=process
 
 [Install]
 WantedBy=multi-user.target

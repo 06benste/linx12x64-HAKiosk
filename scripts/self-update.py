@@ -148,20 +148,39 @@ def _run_streaming(
     return returncode, timed_out["flag"], tail_text, step
 
 
+def _pid_alive(pid: object) -> bool:
+    if not isinstance(pid, int):
+        return False
+    return pathlib.Path(f"/proc/{pid}").exists()
+
+
 def _is_busy(status_file: pathlib.Path, active_states: set[str], stale_after: float = 3600) -> bool:
     """True if status_file's own last-recorded state is one of the given
-    "in progress" states and recent — used to keep a kiosk-software apply
-    and a Debian apply from ever running at the same time. Both eventually
-    shell out to apt, and running two apt operations at once is exactly
-    what produced the "Could not get lock /var/lib/apt/lists/lock" failure
-    seen in a real log — a failure that then needed a manual retry.
-    `stale_after` ignores a stuck "in progress" state left behind by a
-    crash, so that doesn't permanently wedge future runs."""
+    "in progress" states, recent, AND the process that wrote it is still
+    alive — used to keep a kiosk-software apply and a Debian apply from
+    ever running at the same time. Both eventually shell out to apt, and
+    running two apt operations at once is exactly what produced the
+    "Could not get lock /var/lib/apt/lists/lock" failure seen in a real log
+    — a failure that then needed a manual retry.
+
+    The pid check matters on its own, not just as a nice-to-have alongside
+    stale_after: a detached apply can be killed out from under itself —
+    e.g. systemd's default KillMode=control-group means restarting
+    ha-kiosk-power.service (which happens on any routine deploy of
+    power-api.py) kills every process in its cgroup, detached children
+    included, with no chance for a Python except/finally block to run and
+    record "failed". Without the liveness check, that leaves the status
+    file stuck showing "in progress" — and blocking real retries via this
+    exact guard — for the entire stale_after window, which for a real
+    install.sh run (worth keeping long, it can legitimately take 10+
+    minutes) means up to an hour."""
     try:
         data = json.loads(status_file.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False
     if data.get("state") not in active_states:
+        return False
+    if not _pid_alive(data.get("pid")):
         return False
     return (time.time() - (data.get("ts") or 0)) < stale_after
 
@@ -204,7 +223,7 @@ def cmd_check() -> None:
 
 def cmd_apply(include_camera: bool) -> None:
     def status(state: str, **extra: object) -> None:
-        _write_json(UPDATE_STATUS_FILE, {"state": state, "ts": time.time(), **extra})
+        _write_json(UPDATE_STATUS_FILE, {"state": state, "ts": time.time(), "pid": os.getpid(), **extra})
 
     if _is_busy(UPDATE_STATUS_FILE, APPLY_ACTIVE_STATES):
         status("failed", message="An update is already in progress")
@@ -213,6 +232,19 @@ def cmd_apply(include_camera: bool) -> None:
         status("failed", message="A Debian package update is running — try again once it finishes")
         return
 
+    try:
+        _cmd_apply_inner(include_camera, status)
+    except Exception as exc:  # noqa: BLE001
+        # Safety net: without this, any bug/unexpected exception here would
+        # crash the process silently and leave the status file stuck
+        # showing "in progress" forever (the exact stuck-forever symptom
+        # this whole function's guard above exists to prevent triggering
+        # for *other* runs — this half covers this run's own crashes).
+        _log(UPDATE_LOG, f"apply crashed: {exc}")
+        status("failed", message=f"Update crashed: {exc}")
+
+
+def _cmd_apply_inner(include_camera: bool, status) -> None:
     status("checking")
     try:
         rel = fetch_latest_release()
@@ -338,7 +370,7 @@ def cmd_os_check() -> None:
 
 def cmd_os_apply() -> None:
     def status(state: str, **extra: object) -> None:
-        _write_json(OS_UPDATE_STATUS_FILE, {"state": state, "ts": time.time(), **extra})
+        _write_json(OS_UPDATE_STATUS_FILE, {"state": state, "ts": time.time(), "pid": os.getpid(), **extra})
 
     if _is_busy(OS_UPDATE_STATUS_FILE, OS_APPLY_ACTIVE_STATES):
         status("failed", message="A Debian package update is already in progress")
@@ -347,13 +379,35 @@ def cmd_os_apply() -> None:
         status("failed", message="A kiosk-software update is running — try again once it finishes")
         return
 
+    try:
+        _cmd_os_apply_inner(status)
+    except Exception as exc:  # noqa: BLE001
+        # Same safety net as cmd_apply — see its comment. This path is the
+        # one that was actually observed stuck: a plain subprocess.run()
+        # apt-get call with no try/except around it raised uncaught (e.g.
+        # subprocess.TimeoutExpired while Debian's own apt-daily.timer held
+        # the apt lock), silently killing this process mid-run.
+        _log(OS_UPDATE_LOG, f"os-apply crashed: {exc}")
+        status("failed", message=f"Update crashed: {exc}")
+
+
+def _cmd_os_apply_inner(status) -> None:
     before_kernel = subprocess.run(
         ["uname", "-r"], capture_output=True, text=True
     ).stdout.strip()
 
     status("updating")
     _log(OS_UPDATE_LOG, "apt-get update")
-    proc = subprocess.run(["apt-get", "update", "-qq"], capture_output=True, text=True, timeout=180)
+    try:
+        proc = subprocess.run(["apt-get", "update", "-qq"], capture_output=True, text=True, timeout=180)
+    except subprocess.TimeoutExpired:
+        # Debian's own apt-daily.timer/apt-daily-upgrade.timer run
+        # independently of anything here and can hold the apt lock for a
+        # while — this used to raise straight through cmd_os_apply
+        # uncaught, killing it with no "failed" status ever written.
+        _log(OS_UPDATE_LOG, "apt-get update timed out (apt lock busy?)")
+        status("failed", message="Couldn't refresh the package index — the system's own automatic update may be running, try again shortly")
+        return
     _log(OS_UPDATE_LOG, proc.stdout[-2000:] + proc.stderr[-1000:])
     if proc.returncode != 0:
         status("failed", message="apt-get update failed")
