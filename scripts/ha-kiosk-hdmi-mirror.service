@@ -1,0 +1,13 @@
+[Unit]
+Description=Mirror any connected HDMI output onto the kiosk's own panel
+After=getty@tty1.service
+
+[Service]
+Type=simple
+User=kioskuser
+ExecStart=/opt/ha-kiosk/scripts/hdmi-mirror.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
