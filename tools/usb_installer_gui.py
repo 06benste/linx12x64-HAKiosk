@@ -9,13 +9,20 @@ manual Ventoy GUI steps, no drag-and-drop.
 Safety: the drive picker only ever lists disks Windows reports as USB-bus
 removable media (via PowerShell Get-Disk), and the physical drive index used
 for flashing always comes from that same filtered list — never free-typed —
-so this can't be pointed at an internal disk by a typo or stale index.
+so this can't be pointed at an internal disk by a typo or stale index. A
+modal "erase this disk, are you sure" confirmation still gates the actual
+flash/erase.
+
+Requires Administrator to even open (see the bottom of this file) — raw disk
+writes need it, and elevating reactively later meant relaunching mid-workflow
+as a brand new process, throwing away everything already filled in.
 """
 from __future__ import annotations
 
 import ctypes
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -65,7 +72,11 @@ VENTOY_GITHUB_LATEST_API = "https://api.github.com/repos/ventoy/Ventoy/releases/
 # conf_replace plugin), which swaps specific boot-config files at boot time
 # without ever touching the ISO on disk. See ventoy/README.md.
 DEBIAN_ISO_DIR_TMPL = "https://cdimage.debian.org/debian-cd/{version}/amd64/iso-cd/"
-DEFAULT_DEBIAN_VERSION = "13.6.0"
+# cdimage's "current" is a symlink that always points at whatever the latest
+# stable release directory is — reading it means never hardcoding/tracking a
+# version number here at all.
+DEBIAN_CURRENT_ISO_DIR = "https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/"
+ISO_FILENAME_RE = re.compile(r"^debian-([\d.]+)-amd64-netinst\.iso$")
 # ventoy.json's conf_replace rules match this exact filename — copying the
 # verified ISO onto the stick under a fixed name avoids needing Ventoy's
 # wildcard/fuzzy image-matching syntax for whatever version string Debian's
@@ -235,9 +246,48 @@ def download_url(url: str, dest: Path, progress) -> None:
     progress("Download complete.")
 
 
-def download_official_iso(version: str, dest: Path, progress) -> None:
-    url = official_iso_dir_url(version) + official_iso_filename(version)
-    download_url(url, dest, progress)
+def version_from_iso_filename(name: str) -> str | None:
+    m = ISO_FILENAME_RE.match(name)
+    return m.group(1) if m else None
+
+
+def resolve_latest_debian() -> tuple[str, str]:
+    """(version, filename) for whatever cdimage's current/ symlink points at
+    right now — read from its own SHA256SUMS listing rather than scraping an
+    HTML directory index, since that file has to exist and be accurate
+    anyway for verification."""
+    text = fetch_url_text(DEBIAN_CURRENT_ISO_DIR + "SHA256SUMS", timeout=20)
+    for line in text.splitlines():
+        parts = line.split(maxsplit=1)
+        if len(parts) != 2:
+            continue
+        _digest, name = parts
+        name = name.lstrip("*").strip()
+        version = version_from_iso_filename(name)
+        if version:
+            return version, name
+    raise RuntimeError("No netinst ISO found in cdimage's current SHA256SUMS listing")
+
+
+def download_latest_debian(dest_dir: Path, progress) -> tuple[Path, str]:
+    """Resolve + download + verify the current Debian netinst in one go —
+    folds what used to be a separate manual "Verify checksum" click into the
+    download itself, since the checksum lookup already has to happen here
+    either way to know the exact filename to fetch."""
+    progress("Checking cdimage.debian.org for the current release ...")
+    version, filename = resolve_latest_debian()
+    progress(f"Latest: Debian {version}")
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / filename
+    download_url(DEBIAN_CURRENT_ISO_DIR + filename, dest, progress)
+    progress("Fetching official checksum ...")
+    expected = fetch_official_sha256(version, filename)
+    actual = sha256_of_file(dest, progress)
+    if actual != expected:
+        dest.unlink(missing_ok=True)
+        raise RuntimeError("Downloaded ISO does NOT match Debian's published checksum — refusing to use it.")
+    progress("Checksum verified — matches Debian's official release.")
+    return dest, version
 
 
 def fetch_url_text(url: str, timeout: float = 20) -> str:
@@ -423,53 +473,38 @@ class App(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("Linx HA Kiosk — USB Installer Builder")
-        self.geometry("640x760")
-        self.resizable(False, False)
+        self.geometry("640x820")
+        self.minsize(560, 560)
+        self.resizable(True, True)
 
         self.iso_path = tk.StringVar(value=str(find_default_iso() or ""))
-        self.debian_version = tk.StringVar(value=DEFAULT_DEBIAN_VERSION)
         self.ventoy_path = tk.StringVar(value=str(find_ventoy_exe() or ""))
         self.disks: list[UsbDisk] = []
         self.selected_disk: UsbDisk | None = None
-        self.confirm_var = tk.StringVar()
         self.busy = False
         self.iso_verified = False
         self.verify_override = tk.BooleanVar(value=False)
-        self.elevated = is_admin()
 
         self._build_ui()
         self.refresh_disks()
 
     def _build_ui(self) -> None:
-        pad = {"padx": 10, "pady": 6}
+        pad = {"padx": 10, "pady": 5}
 
-        if not self.elevated:
-            ttk.Label(
-                self,
-                text="⚠ Not running as Administrator — downloading/verifying works fine, "
-                     "but writing to the USB drive will need elevation (you'll be prompted when you flash).",
-                foreground="#a56a1c", wraplength=600, justify="left",
-            ).pack(fill="x", padx=10, pady=(8, 0))
-
-        frm_iso = ttk.LabelFrame(self, text="1. Official Debian netinst ISO (unmodified)")
+        frm_iso = ttk.LabelFrame(self, text="1. Debian netinst ISO")
         frm_iso.pack(fill="x", **pad)
         row1 = ttk.Frame(frm_iso)
         row1.pack(fill="x", padx=6, pady=(6, 2))
         ttk.Entry(row1, textvariable=self.iso_path).pack(side="left", fill="x", expand=True)
         ttk.Button(row1, text="Browse…", command=self.browse_iso).pack(side="left", padx=(6, 0))
         row2 = ttk.Frame(frm_iso)
-        row2.pack(fill="x", padx=6, pady=(0, 2))
-        ttk.Label(row2, text="Version:").pack(side="left")
-        ttk.Entry(row2, textvariable=self.debian_version, width=10).pack(side="left", padx=(6, 6))
-        ttk.Button(row2, text="Download from cdimage.debian.org…", command=self.start_download).pack(side="left")
-        row3 = ttk.Frame(frm_iso)
-        row3.pack(fill="x", padx=6, pady=(2, 6))
-        ttk.Button(row3, text="Verify checksum against Debian's SHA256SUMS", command=self.start_verify).pack(side="left")
-        self.verify_status = ttk.Label(row3, text="Not verified yet.", foreground="#a56a1c")
+        row2.pack(fill="x", padx=6, pady=(2, 2))
+        ttk.Button(row2, text="Download latest (verified)", command=self.start_download).pack(side="left")
+        ttk.Button(row2, text="Verify checksum", command=self.start_verify).pack(side="left", padx=(6, 0))
+        self.verify_status = ttk.Label(row2, text="Not verified yet.", foreground="#a56a1c")
         self.verify_status.pack(side="left", padx=8)
         ttk.Checkbutton(
-            frm_iso, variable=self.verify_override,
-            text="Proceed without verification (e.g. offline, or a version cdimage no longer hosts)",
+            frm_iso, variable=self.verify_override, text="Skip verification (offline)",
         ).pack(anchor="w", padx=6, pady=(0, 6))
 
         frm_ventoy = ttk.LabelFrame(self, text="2. Ventoy2Disk.exe")
@@ -480,50 +515,39 @@ class App(tk.Tk):
         ttk.Button(vrow1, text="Browse…", command=self.browse_ventoy).pack(side="left", padx=(6, 0))
         vrow2 = ttk.Frame(frm_ventoy)
         vrow2.pack(fill="x", padx=6, pady=(0, 6))
-        ttk.Button(vrow2, text="Download Ventoy from GitHub…", command=self.start_download_ventoy).pack(side="left")
+        ttk.Button(vrow2, text="Download latest Ventoy", command=self.start_download_ventoy).pack(side="left")
         ttk.Button(vrow2, text="ventoy.net (manual)", command=lambda: webbrowser.open(VENTOY_URL)).pack(side="left", padx=(6, 0))
 
-        frm_disk = ttk.LabelFrame(self, text="3. Choose the USB drive to erase and flash")
+        frm_disk = ttk.LabelFrame(self, text="3. Choose the USB drive to erase")
         frm_disk.pack(fill="both", expand=True, **pad)
         list_row = ttk.Frame(frm_disk)
         list_row.pack(fill="both", expand=True, padx=6, pady=6)
-        self.disk_list = tk.Listbox(list_row, height=6, exportselection=False)
+        self.disk_list = tk.Listbox(list_row, height=5, exportselection=False)
         self.disk_list.pack(side="left", fill="both", expand=True)
         self.disk_list.bind("<<ListboxSelect>>", self.on_select_disk)
-        ttk.Button(frm_disk, text="Rescan drives", command=self.refresh_disks).pack(pady=(0, 6))
-        ttk.Label(
-            frm_disk,
-            text="Only drives Windows reports as USB removable media are listed — internal disks never appear here.",
-            foreground="#555", wraplength=580, justify="left",
-        ).pack(padx=6, pady=(0, 6))
+        ttk.Button(frm_disk, text="Rescan", command=self.refresh_disks).pack(pady=(0, 6))
 
         frm_confirm = ttk.LabelFrame(self, text="4. Confirm")
         frm_confirm.pack(fill="x", **pad)
         self.warn_label = ttk.Label(frm_confirm, text="Select a drive above.", foreground="#a56a1c", wraplength=580, justify="left")
-        self.warn_label.pack(anchor="w", padx=6, pady=(6, 2))
-        row = ttk.Frame(frm_confirm)
-        row.pack(fill="x", padx=6, pady=(0, 6))
-        ttk.Label(row, text="Type the drive letter shown above to confirm:").pack(side="left")
-        ttk.Entry(row, textvariable=self.confirm_var, width=6).pack(side="left", padx=6)
+        self.warn_label.pack(anchor="w", padx=6, pady=6)
 
         self.go_btn = ttk.Button(self, text="Erase, flash & build installer USB", command=self.start_flash)
         self.go_btn.pack(pady=(4, 4))
 
-        frm_update = ttk.LabelFrame(self, text="5. Or: update linx-ha-kiosk/ on an already-prepared stick")
+        frm_update = ttk.LabelFrame(self, text="5. Or: update linx-ha-kiosk/ on an existing stick")
         frm_update.pack(fill="x", **pad)
         ttk.Label(
             frm_update,
-            text="For a stick you've already flashed — refreshes just the linx-ha-kiosk/ project folder "
-                 "(latest scripts/fixes) using the drive selected in step 3. Leaves the ISO and ventoy/ boot "
-                 "config untouched. No Administrator needed — this is a plain file copy, not a disk write.",
+            text="Refreshes just the project folder on the drive selected above — leaves the ISO and Ventoy config untouched.",
             foreground="#555", wraplength=580, justify="left",
         ).pack(anchor="w", padx=6, pady=(6, 4))
         self.update_btn = ttk.Button(
-            frm_update, text="Update linx-ha-kiosk/ files only (no reflash)", command=self.start_update_project,
+            frm_update, text="Update linx-ha-kiosk/ only", command=self.start_update_project,
         )
         self.update_btn.pack(padx=6, pady=(0, 6))
 
-        self.log_box = tk.Text(self, height=12, state="disabled", bg="#10141a", fg="#eef1f4")
+        self.log_box = tk.Text(self, height=18, state="disabled", bg="#10141a", fg="#eef1f4")
         self.log_box.pack(fill="both", expand=True, padx=10, pady=(0, 10))
 
     def log(self, msg: str) -> None:
@@ -552,12 +576,6 @@ class App(tk.Tk):
     def start_download(self) -> None:
         if self.busy:
             return
-        version = self.debian_version.get().strip()
-        if not version:
-            messagebox.showerror("Missing version", "Enter a Debian version, e.g. 13.6.0")
-            return
-        DOWNLOADS.mkdir(parents=True, exist_ok=True)
-        dest = DOWNLOADS / official_iso_filename(version)
         self.busy = True
         self.go_btn.configure(state="disabled")
         self.update_btn.configure(state="disabled")
@@ -565,8 +583,10 @@ class App(tk.Tk):
 
         def worker():
             try:
-                download_official_iso(version, dest, self.log)
+                dest, version = download_latest_debian(DOWNLOADS, self.log)
+                self.iso_verified = True
                 self.after(0, lambda: self.iso_path.set(str(dest)))
+                self.after(0, lambda: self.verify_status.configure(text=f"Verified ✓ Debian {version}", foreground="#3dbe7a"))
                 self.log(f"Saved to {dest}")
             except Exception as exc:  # noqa: BLE001
                 msg = str(exc)
@@ -606,12 +626,16 @@ class App(tk.Tk):
         if self.busy:
             return
         iso = Path(self.iso_path.get().strip())
-        version = self.debian_version.get().strip()
         if not iso.exists():
             messagebox.showerror("Missing ISO", "Pick or download a Debian ISO first.")
             return
+        version = version_from_iso_filename(iso.name)
         if not version:
-            messagebox.showerror("Missing version", "Enter the Debian version this ISO is, e.g. 13.6.0")
+            messagebox.showerror(
+                "Can't determine version",
+                f"'{iso.name}' isn't a standard debian-X.Y.Z-amd64-netinst.iso filename — "
+                "can't look up which checksum to check it against.",
+            )
             return
         self.busy = True
         self.go_btn.configure(state="disabled")
@@ -677,16 +701,6 @@ class App(tk.Tk):
     def start_flash(self) -> None:
         if self.busy:
             return
-        if not self.elevated:
-            if messagebox.askyesno(
-                "Administrator required",
-                "Writing to the USB drive needs Administrator privileges (Windows refuses raw disk "
-                "access otherwise). Relaunch this tool as Administrator now?\n\n"
-                "You'll need to re-enter the ISO/Ventoy paths and re-pick the drive in the new window.",
-            ):
-                relaunch_as_admin()
-                self.destroy()
-            return
         iso = Path(self.iso_path.get().strip())
         ventoy = Path(self.ventoy_path.get().strip())
         if not iso.exists():
@@ -695,8 +709,7 @@ class App(tk.Tk):
         if not self.iso_verified and not self.verify_override.get():
             messagebox.showerror(
                 "ISO not verified",
-                "Click 'Verify checksum' first so this ISO is confirmed to match Debian's official release, "
-                "or explicitly tick the override checkbox if you can't reach the network right now.",
+                "Click 'Verify checksum' first, or tick 'Skip verification' if you're offline.",
             )
             return
         if not ventoy.exists() or ventoy.name.lower() != "ventoy2disk.exe":
@@ -706,28 +719,11 @@ class App(tk.Tk):
             messagebox.showerror("No drive selected", "Select a USB drive to flash.")
             return
         d = self.selected_disk
-        # A drive can already have more than one partition/letter (e.g. it was
-        # Ventoy-flashed before: a big data partition + a small VTOYEFI one both
-        # get letters). Accept any of them, not just the first — the point of
-        # this check is confirming it's the right *disk*, not guessing which of
-        # several correct letters we arbitrarily picked to display.
-        letters = [x.rstrip(":").upper() for x in (d.drive_letters or "").split(",") if x.strip()]
-        typed = self.confirm_var.get().strip().rstrip(":").upper()
-        if not letters:
-            messagebox.showerror(
-                "Can't confirm",
-                "That drive has no assigned letter to type back — rescan, or assign one in Disk Management first.",
-            )
-            return
-        if typed not in letters:
-            messagebox.showerror(
-                "Confirmation mismatch",
-                f"Type one of this drive's letters exactly to confirm: {', '.join(letters)}",
-            )
-            return
         if not messagebox.askyesno(
             "Final confirmation",
-            f"Erase Disk {d.number} ({d.friendly_name}, {d.size_gb} GB) and build the installer USB?\n\nThis cannot be undone.",
+            f"Erase Disk {d.number} ({d.friendly_name}, {d.size_gb} GB"
+            f"{f', currently {d.drive_letters}' if d.drive_letters else ''}) and build the installer USB?"
+            "\n\nThis cannot be undone.",
         ):
             return
 
@@ -796,20 +792,6 @@ class App(tk.Tk):
             messagebox.showerror("No drive selected", "Select a USB drive in step 3 first.")
             return
         d = self.selected_disk
-        letters = [x.rstrip(":").upper() for x in (d.drive_letters or "").split(",") if x.strip()]
-        typed = self.confirm_var.get().strip().rstrip(":").upper()
-        if not letters:
-            messagebox.showerror(
-                "Can't confirm",
-                "That drive has no assigned letter to type back — rescan, or assign one in Disk Management first.",
-            )
-            return
-        if typed not in letters:
-            messagebox.showerror(
-                "Confirmation mismatch",
-                f"Type one of this drive's letters exactly (in step 4) to confirm: {', '.join(letters)}",
-            )
-            return
         if not messagebox.askyesno(
             "Update project files",
             f"Replace the linx-ha-kiosk/ folder on Disk {d.number} ({d.friendly_name}) with the current version?\n\n"
@@ -834,33 +816,20 @@ class App(tk.Tk):
         except Exception as exc:  # noqa: BLE001
             msg = str(exc)
             self.log(f"ERROR: {msg}")
-            # Access-denied errors on removable media are sometimes a real
-            # permissions/security-software thing, not something our retry-
-            # and-clear-read-only logic can fix. Only offer elevation here,
-            # reactively — most of the time this operation doesn't need it at
-            # all, so don't ask up front on every click.
-            is_access_denied = isinstance(exc, PermissionError) or "Access is denied" in msg or getattr(exc, "winerror", None) == 5
-            if is_access_denied and not self.elevated:
-                self.after(0, lambda: self._offer_elevation_after_failure(msg))
-            else:
-                self.after(0, lambda: messagebox.showerror("Failed", msg))
+            self.after(0, lambda: messagebox.showerror("Failed", msg))
         finally:
             self.busy = False
             self.after(0, lambda: self.go_btn.configure(state="normal"))
             self.after(0, lambda: self.update_btn.configure(state="normal"))
 
-    def _offer_elevation_after_failure(self, msg: str) -> None:
-        if messagebox.askyesno(
-            "Administrator required",
-            f"Failed: {msg}\n\n"
-            "This looks like a permissions issue — some antivirus/security software blocks "
-            "non-admin processes from deleting files on removable media. Relaunch this tool "
-            "as Administrator and try again?\n\n"
-            "You'll need to re-pick the drive in the new window.",
-        ):
-            relaunch_as_admin()
-            self.destroy()
-
 
 if __name__ == "__main__":
+    # Required up front, not offered reactively when a write fails: relaunching
+    # elevated starts a brand new process, which used to happen mid-workflow
+    # (e.g. right before flashing) and threw away everything already filled
+    # in — the ISO/Ventoy paths, the picked drive. Elevating before the first
+    # window even opens means that never happens.
+    if not is_admin():
+        relaunch_as_admin()
+        sys.exit(0)
     App().mainloop()
