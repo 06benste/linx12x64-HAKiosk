@@ -19,3 +19,36 @@ __pycache__/
 # Curated release snapshot, populated for upload as a separate GitHub release —
 # a full duplicate of selected files, not something to track alongside its own source
 V0.1/
+
+# One-off hardware bring-up diagnostic/deploy scripts accumulated during
+# camera/display debugging — never part of the install flow, kept locally
+# for reference/history but never meant to ship to end users
+scripts/_*
+
+# Maintainer-only tools: regenerate ventoy/boot-fix/*.cfg or
+# ventoy/firmware-inject.tar.gz if a future Debian point release changes
+# things; not part of the normal install flow (see docs/INSTALL.md)
+scripts/patch_debian_iso.py
+scripts/rebuild_debian_iso.py
+scripts/inject_firmware_initrd.py
+scripts/build_ventoy_firmware_injection.py
+
+# Stray duplicate — 06-no-sleep.sh writes this file's real content inline
+# via heredoc at install time; this tracked copy was never installed from
+scripts/keep-awake-x11.sh
+
+# PC-side maintainer tools: drive a tablet over SSH, not something an end
+# user setting up their own tablet runs
+tools/deploy_to_tablet.py
+tools/cam_tuner_gui.py
+tools/camera_preview.py
+
+# Personal/instance data, not a template
+ha-url.txt
+
+# Empty stray file
+docs/install2.md
+
+# Duplicate build-output subset of firmware/brcm/ — firmware/ is the real,
+# complete source already tracked
+firmware-media/
