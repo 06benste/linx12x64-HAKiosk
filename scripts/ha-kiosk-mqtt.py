@@ -693,8 +693,8 @@ class Bridge:
                     "mqtt_still_fps": self.stream_mqtt_fps if self.camera_power else 0,
                     "camera_power": "ON" if self.camera_power else "OFF",
                     "note": (
-                        "Live video: use HA mjpeg camera on live_url "
-                        "(ha/kiosk_camera_stream.yaml). This MQTT entity is stills only."
+                        "Live video: point an HA mjpeg camera at live_url. "
+                        "This MQTT entity is stills only."
                     ),
                 }
             ),
