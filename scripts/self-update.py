@@ -531,9 +531,9 @@ def _cmd_os_apply_inner(status) -> None:
     )
     newest_kernel_pkg = newest_kernel_proc.stdout.strip()
     # A kernel bump needs a reboot to take effect. DKMS's own postinst hook
-    # (registered by 08-install-camera.sh's `dkms add`) should rebuild the
-    # atomisp module for the new kernel automatically, same as any other
-    # DKMS module — not independently verified on this hardware.
+    # (registered by 09-install-camera.sh's `dkms add`) should rebuild the
+    # atomisp module for the new kernel automatically — not independently
+    # verified on this hardware.
     reboot_recommended = bool(newest_kernel_pkg) and before_kernel not in newest_kernel_pkg
 
     # Read this run's own output back from the log file rather than

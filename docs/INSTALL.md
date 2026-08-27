@@ -144,7 +144,7 @@ bash scripts/install.sh
 reboot
 ```
 
-That one script sets up everything: Wi‑Fi firmware, the kiosk itself, GPU stabilizers, sleep prevention, the power drawer's backend API, the AXP288 charger current-limit fix (without it the tablet slowly discharges overnight even "plugged in"), a battery guard (cleanly shuts the tablet down if it ever hits 1% while actually running on battery, instead of hard-cutting), a secondary guardian (dims the display if battery is low, turns the camera off if it's running hot), and the front camera — in sequence: `01-wifi-firmware.sh` → `02-install-kiosk.sh` → `03-fix-gpu.sh` → `06-no-sleep.sh` → `07-power-drawer.sh` → `10-fix-charger.sh` → `11-battery-guard.sh` → `12-guardian.sh` → `09-install-camera.sh`.
+That one script sets up everything: Wi‑Fi firmware, the kiosk itself, GPU stabilizers, sleep prevention, the power drawer's backend API, the AXP288 charger current-limit fix (without it the tablet slowly discharges overnight even "plugged in"), the background daemons (battery guard — cleanly shuts down at 1% instead of hard-cutting; guardian — dims on low battery, cuts the camera if it's running hot; auto-rotate, off by default; self-update; the daily update-check timer; HDMI mirror), a bounded shutdown watchdog, and the front camera — in sequence: `01-wifi-firmware.sh` → `02-install-kiosk.sh` → `03-fix-gpu.sh` → `06-no-sleep.sh` → `07-power-drawer.sh` → `10-fix-charger.sh` → `11-daemons.sh` → `12-shutdown-reliability.sh` → `09-install-camera.sh`.
 
 Once it's done, `sudo bash scripts/self-test.sh` checks every local service and endpoint actually came up — worth running before you reboot, and safe to re-run any time later.
 
