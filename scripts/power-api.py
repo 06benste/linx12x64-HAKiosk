@@ -426,13 +426,16 @@ def update_check() -> dict[str, Any]:
         return {"ok": False, "error": proc.stderr.strip() or "self-update check failed"}
 
 
-def update_apply(include_camera: bool) -> dict[str, Any]:
+def update_apply() -> dict[str, Any]:
     """Detached — can take minutes (download + re-run install.sh). The
-    Updates tab polls update_status()/os_update_status() for progress."""
+    Updates tab polls update_status()/os_update_status() for progress.
+    Whether the camera driver gets rebuilt is auto-detected by
+    self-update.py itself (diffs camera-relevant source against the last
+    release actually applied) — not a choice made here; guessing "does
+    this release touch the camera" from release notes wasn't reliable, so
+    there's no include_camera toggle to plumb through any more."""
     _reset_status_file(UPDATE_STATUS_FILE, "starting")
     cmd = ["python3", SELF_UPDATE_SCRIPT, "apply"]
-    if include_camera:
-        cmd.append("--include-camera")
     detach(cmd)
     return {"message": "Update started"}
 
@@ -860,7 +863,7 @@ systemctl start getty@tty1.service
     if action == "update-check":
         return {"ok": True, **update_check()}
     if action == "update-apply":
-        return {"ok": True, **update_apply(bool(body.get("include_camera")))}
+        return {"ok": True, **update_apply()}
     if action == "os-update-check":
         return {"ok": True, **os_update_check()}
     if action == "os-update-apply":

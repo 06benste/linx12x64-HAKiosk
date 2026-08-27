@@ -552,14 +552,6 @@
       </div>
       <div id="update-available-box" style="display:none">
         <div class="hint" id="update-notes"></div>
-        <div class="toggle-row">
-          <label for="update-include-camera">Also rebuild the camera driver</label>
-          <label class="switch">
-            <input type="checkbox" id="update-include-camera" />
-            <span class="slider"></span>
-          </label>
-        </div>
-        <div class="hint">Slower, and briefly interrupts the camera stream. Only turn this on if the release notes mention a camera fix.</div>
         <button type="button" class="btn" id="btn-update-apply">Update now</button>
       </div>
       <div class="status" id="update-progress" aria-live="polite"></div>
@@ -992,7 +984,6 @@
     const btnUpdateCheck = document.getElementById("btn-update-check");
     const updateAvailableBox = document.getElementById("update-available-box");
     const updateNotes = document.getElementById("update-notes");
-    const updateIncludeCamera = document.getElementById("update-include-camera");
     const btnUpdateApply = document.getElementById("btn-update-apply");
     const updateProgress = document.getElementById("update-progress");
     const updateProgressWrap = document.getElementById("update-progress-wrap");
@@ -1088,11 +1079,7 @@
       updateProgressFill.style.width = "0%";
       showLog(updateLog, "");
       try {
-        const res = await fetch(CAM_POWER_BASE + "/update-apply", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ include_camera: updateIncludeCamera.checked }),
-        });
+        const res = await fetch(CAM_POWER_BASE + "/update-apply", { method: "POST" });
         const data = await res.json();
         if (!res.ok || data.ok === false) throw new Error(data.error || "update failed to start");
         pollUpdateStatus();
@@ -1120,7 +1107,9 @@
           else if (state === "checking") setStatus(updateProgress, "Checking for the latest release…");
           else if (state === "downloading") setStatus(updateProgress, `Downloading ${data.version || ""}…`);
           else if (state === "extracting") setStatus(updateProgress, "Extracting…");
-          else if (state === "installing") setStatus(updateProgress, "Installing — this can take a few minutes…");
+          else if (state === "installing") {
+            setStatus(updateProgress, "Installing — this can take a few minutes…" + (data.camera ? " (also rebuilding the camera driver, which takes longer)" : ""));
+          }
           else if (state === "done") {
             setStatus(updateProgress, data.message || "Updated", "ok");
             updateProgressFill.style.width = "100%";

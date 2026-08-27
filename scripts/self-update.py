@@ -11,13 +11,19 @@ block the API process, and so it's runnable/testable standalone over SSH.
 
 Usage:
     self-update.py check
-    self-update.py apply [--include-camera]
+    self-update.py apply [--include-camera | --skip-camera]
     self-update.py os-check
     self-update.py os-apply
+
+apply's camera rebuild is auto-detected by default (diffs the camera-
+relevant source files against what was last actually applied) — the web
+UI has no toggle for this any more, only --include-camera/--skip-camera
+here force it either way for manual/SSH use.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import pathlib
@@ -35,6 +41,28 @@ INSTALL = pathlib.Path("/opt/ha-kiosk")
 VERSION_FILE = INSTALL / "version"
 UPDATE_STATUS_FILE = INSTALL / "update-status.json"
 OS_UPDATE_STATUS_FILE = INSTALL / "os-update-status.json"
+# sha256 of each CAMERA_PATHS file as of the last release actually applied
+# — lets a future apply tell whether anything camera-relevant changed
+# without needing a human to remember to flag it in release notes.
+CAMERA_MANIFEST_FILE = INSTALL / "camera-src-manifest.json"
+# Everything scripts/09-install-camera.sh installs or reads from this repo
+# (confirmed by reading it directly — it has no separate firmware/patch
+# directory; the actual kernel driver source is cloned from a separate
+# GitHub repo at build time, so changes there can't be detected this way,
+# only changes to our own install/patch logic and the userspace pieces).
+CAMERA_PATHS = [
+    "scripts/09-install-camera.sh",
+    "scripts/load-atomisp.sh",
+    "scripts/ha-kiosk-atomisp.service",
+    "config/camera_preview.json",
+    "scripts/camera-stream-server.py",
+    "scripts/camera_preview.py",
+    "scripts/capture-tablet-cam.py",
+    "scripts/gc2355_hw_exposure.py",
+    "scripts/static/cam-tuner.html",
+    "scripts/ha-cam-tuner",
+    "scripts/ha-kiosk-camera-stream.service",
+]
 # Merged { "kiosk": {...}, "os": {...}, "checked_at": ... } cache that the
 # power drawer's notification bubble reads (via power-api.py's
 # /update-available) — written by every successful `check`/`os-check`, not
@@ -189,6 +217,28 @@ APPLY_ACTIVE_STATES = {"starting", "checking", "downloading", "extracting", "ins
 OS_APPLY_ACTIVE_STATES = {"starting", "updating", "upgrading"}
 
 
+def _camera_manifest(src_root: pathlib.Path) -> dict[str, str]:
+    manifest: dict[str, str] = {}
+    for rel in CAMERA_PATHS:
+        p = src_root / rel
+        if p.is_file():
+            manifest[rel] = hashlib.sha256(p.read_bytes()).hexdigest()
+    return manifest
+
+
+def _camera_rebuild_needed(src_root: pathlib.Path) -> bool:
+    new_manifest = _camera_manifest(src_root)
+    try:
+        old_manifest = json.loads(CAMERA_MANIFEST_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        # No manifest yet — first apply since this feature shipped, or a
+        # tablet that's never self-updated before. Can't prove nothing
+        # changed, so rebuild once to establish a baseline; every apply
+        # after this one compares properly.
+        return True
+    return new_manifest != old_manifest
+
+
 def _merge_update_available(section: str, data: dict) -> None:
     try:
         existing = json.loads(UPDATE_AVAILABLE_FILE.read_text(encoding="utf-8"))
@@ -221,7 +271,7 @@ def cmd_check() -> None:
     print(json.dumps(result))
 
 
-def cmd_apply(include_camera: bool) -> None:
+def cmd_apply(include_camera: bool | None = None) -> None:
     def status(state: str, **extra: object) -> None:
         _write_json(UPDATE_STATUS_FILE, {"state": state, "ts": time.time(), "pid": os.getpid(), **extra})
 
@@ -244,7 +294,7 @@ def cmd_apply(include_camera: bool) -> None:
         status("failed", message=f"Update crashed: {exc}")
 
 
-def _cmd_apply_inner(include_camera: bool, status) -> None:
+def _cmd_apply_inner(include_camera: bool | None, status) -> None:
     status("checking")
     try:
         rel = fetch_latest_release()
@@ -302,14 +352,24 @@ def _cmd_apply_inner(include_camera: bool, status) -> None:
             status("failed", message="scripts/install.sh missing from release archive")
             return
 
-        status("installing", version=tag, log="", step=None)
+        # Auto-detected unless a caller forced it (only the CLI's
+        # --include-camera/--skip-camera do that — the web UI no longer
+        # offers a toggle, since "does this release touch the camera"
+        # wasn't something the release notes reliably said): diffs this
+        # release's camera-relevant source against what was last actually
+        # applied, so the slow DKMS rebuild only runs when something that
+        # matters to it changed.
+        camera_needed = _camera_rebuild_needed(src_root) if include_camera is None else include_camera
+        new_camera_manifest = _camera_manifest(src_root)
+
+        status("installing", version=tag, log="", step=None, camera=camera_needed)
         env = os.environ.copy()
-        if not include_camera:
+        if not camera_needed:
             env["SKIP_CAMERA"] = "1"
-        _log(UPDATE_LOG, f"running install.sh (include_camera={include_camera})")
+        _log(UPDATE_LOG, f"running install.sh (camera_needed={camera_needed})")
         returncode, timed_out, log_tail, step = _run_streaming(
             ["bash", str(install_sh)],
-            status_cb=lambda tail, step: status("installing", version=tag, log=tail, step=step),
+            status_cb=lambda tail, step: status("installing", version=tag, log=tail, step=step, camera=camera_needed),
             log_path=UPDATE_LOG,
             timeout=1800,
             env=env,
@@ -317,7 +377,7 @@ def _cmd_apply_inner(include_camera: bool, status) -> None:
         if timed_out:
             status(
                 "failed",
-                message="Install step timed out — try again, or include_camera=false if it was rebuilding the camera driver",
+                message="Install step timed out — try again" + (" (was also rebuilding the camera driver — try self-update.py apply --skip-camera over SSH if this keeps happening)" if camera_needed else ""),
                 log=log_tail, step=step,
             )
             return
@@ -326,8 +386,9 @@ def _cmd_apply_inner(include_camera: bool, status) -> None:
             return
 
     VERSION_FILE.write_text(tag + "\n", encoding="utf-8")
+    _write_json(CAMERA_MANIFEST_FILE, new_camera_manifest)
     _merge_update_available("kiosk", {"ok": True, "current": tag, "latest": tag, "update_available": False, "notes": "", "published_at": ""})
-    status("done", version=tag, message=f"Updated to {tag}")
+    status("done", version=tag, message=f"Updated to {tag}" + (" (camera driver also rebuilt)" if camera_needed else ""), camera=camera_needed)
     # Give the Updates tab's poll (every 3s) a chance to actually render
     # "done" before the display reloads out from under it — this restart
     # kills and relaunches the very Chromium tab showing that status, so
@@ -455,7 +516,15 @@ def main() -> None:
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("check")
     p_apply = sub.add_parser("apply")
-    p_apply.add_argument("--include-camera", action="store_true")
+    camera_group = p_apply.add_mutually_exclusive_group()
+    camera_group.add_argument(
+        "--include-camera", dest="camera", action="store_const", const=True, default=None,
+        help="Force a camera rebuild regardless of auto-detection",
+    )
+    camera_group.add_argument(
+        "--skip-camera", dest="camera", action="store_const", const=False,
+        help="Force-skip the camera rebuild regardless of auto-detection",
+    )
     sub.add_parser("os-check")
     sub.add_parser("os-apply")
     args = ap.parse_args()
@@ -463,7 +532,7 @@ def main() -> None:
     if args.cmd == "check":
         cmd_check()
     elif args.cmd == "apply":
-        cmd_apply(args.include_camera)
+        cmd_apply(args.camera)
     elif args.cmd == "os-check":
         cmd_os_check()
     elif args.cmd == "os-apply":
