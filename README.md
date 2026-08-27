@@ -2,6 +2,8 @@
 
 Turn a wiped **Linx 12X64** (Atom x5-Z8350, 4GB) into a dedicated Home Assistant wall panel on Debian.
 
+> **Transparency note:** Claude (Anthropic's AI) had a significant hand in developing this project — code, scripts, and docs alike. Every change was directed, reviewed, and extensively tested on real hardware by the maintainer; nothing here shipped unverified.
+
 ## You do not need the old Windows drivers
 
 This repo includes the Linx-specific Broadcom 43455 firmware (sourced from community Linx 12X64 archives):
