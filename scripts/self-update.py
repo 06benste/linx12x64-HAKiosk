@@ -109,6 +109,31 @@ def fetch_latest_release() -> dict:
 
 
 STEP_RE = re.compile(r"^== (\d+)/(\d+):")
+APT_SUMMARY_RE = re.compile(r"(\d+) upgraded, (\d+) newly installed, (\d+) to remove and (\d+) not upgraded")
+
+
+def _parse_apt_upgrade_result(text: str) -> tuple[int, list[str]]:
+    """(upgraded_count, held_back_package_names) parsed from apt-get
+    upgrade's own summary output. A held-back package is expected and
+    common — usually a new kernel that needs extra dependency changes the
+    deliberately-conservative `apt-get upgrade` (never full-upgrade) won't
+    make on its own — but silently reporting "done" without saying so reads
+    as if the update either did nothing or is stuck, when it actually ran
+    to completion every time and just had nothing it was willing to do."""
+    upgraded = 0
+    m = APT_SUMMARY_RE.search(text)
+    if m:
+        upgraded = int(m.group(1))
+    held_back: list[str] = []
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if line.strip() == "The following packages have been kept back:":
+            for follow in lines[i + 1:]:
+                if not follow.startswith(" "):
+                    break
+                held_back.extend(follow.split())
+            break
+    return upgraded, held_back
 
 
 def _run_streaming(
@@ -497,7 +522,11 @@ def _cmd_os_apply_inner(status) -> None:
         return
 
     newest_kernel_proc = subprocess.run(
-        "dpkg -l 'linux-image-*' | awk '/^ii/{print $2}' | sort -V | tail -1",
+        # linux-image-[0-9]*, not linux-image-* — excludes the bare
+        # linux-image-amd64 meta-package itself, which has no version in its
+        # name and would otherwise get compared against `uname -r` as if it
+        # were a real kernel version.
+        "dpkg -l 'linux-image-[0-9]*' | awk '/^ii/{print $2}' | sort -V | tail -1",
         shell=True, capture_output=True, text=True,
     )
     newest_kernel_pkg = newest_kernel_proc.stdout.strip()
@@ -507,8 +536,28 @@ def _cmd_os_apply_inner(status) -> None:
     # DKMS module — not independently verified on this hardware.
     reboot_recommended = bool(newest_kernel_pkg) and before_kernel not in newest_kernel_pkg
 
+    # Read this run's own output back from the log file rather than
+    # log_tail (capped at 40 lines for display — the "N upgraded" summary
+    # line can scroll out of that window on a chatty run, well before the
+    # unpacking/setting-up noise that follows it ends).
+    try:
+        recent_log = OS_UPDATE_LOG.read_text(encoding="utf-8", errors="replace")[-8000:]
+    except OSError:
+        recent_log = log_tail
+    upgraded_count, held_back = _parse_apt_upgrade_result(recent_log)
+
+    if upgraded_count == 0 and held_back:
+        names = ", ".join(held_back[:5]) + ("…" if len(held_back) > 5 else "")
+        message = f"Nothing to upgrade — {len(held_back)} package(s) held back ({names}); would need more than a plain upgrade"
+    elif upgraded_count == 0:
+        message = "Already up to date"
+    else:
+        message = f"Debian packages updated ({upgraded_count} upgraded)"
+        if held_back:
+            message += f", {len(held_back)} held back"
+
     _merge_update_available("os", {"ok": True, "upgradable_count": 0, "packages": [], "update_available": False})
-    status("done", message="Debian packages updated", reboot_recommended=reboot_recommended)
+    status("done", message=message, reboot_recommended=reboot_recommended, held_back=held_back)
 
 
 def main() -> None:
