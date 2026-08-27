@@ -1027,7 +1027,7 @@
       try {
         const res = await fetch(CAM_POWER_BASE + "/update-status", { cache: "no-store" });
         const data = await res.json();
-        if (["checking", "downloading", "extracting", "installing"].includes(data.state)) {
+        if (["starting", "checking", "downloading", "extracting", "installing"].includes(data.state)) {
           btnUpdateApply.disabled = true;
           updateAvailableBox.style.display = "block";
           pollUpdateStatus();
@@ -1040,7 +1040,7 @@
       try {
         const res2 = await fetch(CAM_POWER_BASE + "/os-update-status", { cache: "no-store" });
         const data2 = await res2.json();
-        if (["updating", "upgrading"].includes(data2.state)) {
+        if (["starting", "updating", "upgrading"].includes(data2.state)) {
           btnOsUpdateApply.disabled = true;
           osUpdateAvailableBox.style.display = "block";
           pollOsUpdateStatus();
@@ -1116,7 +1116,8 @@
             updateProgressFill.style.width = Math.round((n / total) * 100) + "%";
             updateProgressLabel.textContent = `install.sh step ${n} of ${total}`;
           }
-          if (state === "checking") setStatus(updateProgress, "Checking for the latest release…");
+          if (state === "starting") setStatus(updateProgress, "Starting update…");
+          else if (state === "checking") setStatus(updateProgress, "Checking for the latest release…");
           else if (state === "downloading") setStatus(updateProgress, `Downloading ${data.version || ""}…`);
           else if (state === "extracting") setStatus(updateProgress, "Extracting…");
           else if (state === "installing") setStatus(updateProgress, "Installing — this can take a few minutes…");
@@ -1177,6 +1178,8 @@
       btnOsUpdateApply.disabled = true;
       setStatus(osUpdateProgress, "Starting update…");
       showLog(osUpdateLog, "");
+      osRebootBanner.style.display = "none";
+      btnOsUpdateReboot.style.display = "none";
       try {
         const res = await fetch(CAM_POWER_BASE + "/os-update-apply", { method: "POST" });
         const data = await res.json();
@@ -1196,7 +1199,8 @@
           const data = await res.json();
           const state = data.state || "idle";
           if (data.log) showLog(osUpdateLog, data.log);
-          if (state === "updating") setStatus(osUpdateProgress, "Refreshing package index…");
+          if (state === "starting") setStatus(osUpdateProgress, "Starting update…");
+          else if (state === "updating") setStatus(osUpdateProgress, "Refreshing package index…");
           else if (state === "upgrading") setStatus(osUpdateProgress, "Upgrading packages — this can take a while…");
           else if (state === "done") {
             setStatus(osUpdateProgress, data.message || "Updated", "ok");

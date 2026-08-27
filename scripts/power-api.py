@@ -402,6 +402,20 @@ def _read_status_file(path: pathlib.Path) -> dict[str, Any]:
         return {"state": "idle"}
 
 
+def _reset_status_file(path: pathlib.Path, state: str) -> None:
+    """Written synchronously, before the real work is even detached — closes
+    a real race where the Updates tab's poll fires immediately after the
+    apply POST resolves and can read stale state left over from the
+    *previous* run (done/failed/idle) before the new detached process gets
+    a chance to write anything of its own. That stale read was being
+    displayed as this run's outcome — showing an instant misleading "done"
+    (reboot banner and all) or "failed", which also stops polling and
+    re-enables the button, inviting another press while the real update
+    kept running unobserved underneath it."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"state": state, "ts": time.time()}), encoding="utf-8")
+
+
 def update_check() -> dict[str, Any]:
     """Synchronous — a single GitHub API call, self-update.py's own `check`
     subcommand handles the HTTP request and JSON shape."""
@@ -415,6 +429,7 @@ def update_check() -> dict[str, Any]:
 def update_apply(include_camera: bool) -> dict[str, Any]:
     """Detached — can take minutes (download + re-run install.sh). The
     Updates tab polls update_status()/os_update_status() for progress."""
+    _reset_status_file(UPDATE_STATUS_FILE, "starting")
     cmd = ["python3", SELF_UPDATE_SCRIPT, "apply"]
     if include_camera:
         cmd.append("--include-camera")
@@ -442,6 +457,7 @@ def os_update_check() -> dict[str, Any]:
 
 
 def os_update_apply() -> dict[str, Any]:
+    _reset_status_file(OS_UPDATE_STATUS_FILE, "starting")
     detach(["python3", SELF_UPDATE_SCRIPT, "os-apply"])
     return {"message": "Debian package update started"}
 

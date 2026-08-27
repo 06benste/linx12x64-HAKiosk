@@ -185,8 +185,8 @@ def _is_busy(status_file: pathlib.Path, active_states: set[str], stale_after: fl
     return (time.time() - (data.get("ts") or 0)) < stale_after
 
 
-APPLY_ACTIVE_STATES = {"checking", "downloading", "extracting", "installing"}
-OS_APPLY_ACTIVE_STATES = {"updating", "upgrading"}
+APPLY_ACTIVE_STATES = {"starting", "checking", "downloading", "extracting", "installing"}
+OS_APPLY_ACTIVE_STATES = {"starting", "updating", "upgrading"}
 
 
 def _merge_update_available(section: str, data: dict) -> None:
