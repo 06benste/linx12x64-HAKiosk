@@ -112,28 +112,39 @@ STEP_RE = re.compile(r"^== (\d+)/(\d+):")
 APT_SUMMARY_RE = re.compile(r"(\d+) upgraded, (\d+) newly installed, (\d+) to remove and (\d+) not upgraded")
 
 
-def _parse_apt_upgrade_result(text: str) -> tuple[int, list[str]]:
-    """(upgraded_count, held_back_package_names) parsed from apt-get
-    upgrade's own summary output. A held-back package is expected and
-    common — usually a new kernel that needs extra dependency changes the
-    deliberately-conservative `apt-get upgrade` (never full-upgrade) won't
-    make on its own — but silently reporting "done" without saying so reads
-    as if the update either did nothing or is stuck, when it actually ran
-    to completion every time and just had nothing it was willing to do."""
-    upgraded = 0
+def _parse_apt_plan(text: str) -> dict:
+    """Parses apt-get upgrade's own report (real or --simulate) into what it
+    actually will/did do, from the same "Calculating upgrade..." summary and
+    package-list blocks it always prints. held_back packages are expected
+    and common — usually a new kernel that needs extra dependency changes
+    the deliberately-conservative `apt-get upgrade` (never full-upgrade)
+    won't make on its own — but they're never counted in upgraded_count:
+    apt list --upgradable (the naive way to check for pending updates)
+    can't tell the difference between "will actually be upgraded" and
+    "permanently held back", so a tablet with only a held-back kernel
+    would show "1 update available" forever, forever a no-op if applied."""
+    upgraded_count = 0
     m = APT_SUMMARY_RE.search(text)
     if m:
-        upgraded = int(m.group(1))
-    held_back: list[str] = []
+        upgraded_count = int(m.group(1))
     lines = text.splitlines()
-    for i, line in enumerate(lines):
-        if line.strip() == "The following packages have been kept back:":
-            for follow in lines[i + 1:]:
-                if not follow.startswith(" "):
-                    break
-                held_back.extend(follow.split())
-            break
-    return upgraded, held_back
+
+    def block(header: str) -> list[str]:
+        names: list[str] = []
+        for i, line in enumerate(lines):
+            if line.strip() == header:
+                for follow in lines[i + 1:]:
+                    if not follow.startswith(" "):
+                        break
+                    names.extend(follow.split())
+                break
+        return names
+
+    return {
+        "upgraded_count": upgraded_count,
+        "upgraded": block("The following packages will be upgraded:"),
+        "held_back": block("The following packages have been kept back:"),
+    }
 
 
 def _run_streaming(
@@ -438,17 +449,25 @@ def cmd_os_check() -> None:
         # As in cmd_check: don't touch UPDATE_AVAILABLE_FILE on failure.
         print(json.dumps({"ok": False, "error": proc.stderr.strip()[-500:]}))
         return
-    proc2 = subprocess.run(["apt", "list", "--upgradable"], capture_output=True, text=True, timeout=60)
-    lines = [
-        l for l in proc2.stdout.splitlines()
-        if l.strip() and "/" in l and not l.startswith("Listing")
-    ]
-    packages = [l.split("/", 1)[0] for l in lines]
+    # A dry-run of the real command, not `apt list --upgradable` — that
+    # lists everything with a newer version regardless of whether a plain
+    # upgrade could ever actually install it, which is exactly how a
+    # permanently-held-back kernel package ends up reported as "1 update
+    # available" forever, even though clicking update would never do
+    # anything with it. --simulate prints the identical "Calculating
+    # upgrade... / kept back / N upgraded" report a real run would.
+    env = os.environ.copy()
+    env["DEBIAN_FRONTEND"] = "noninteractive"
+    proc2 = subprocess.run(
+        ["apt-get", "upgrade", "--simulate"], capture_output=True, text=True, timeout=60, env=env,
+    )
+    plan = _parse_apt_plan(proc2.stdout)
     result = {
         "ok": True,
-        "upgradable_count": len(lines),
-        "packages": packages,
-        "update_available": len(lines) > 0,
+        "upgradable_count": plan["upgraded_count"],
+        "packages": plan["upgraded"],
+        "held_back": plan["held_back"],
+        "update_available": plan["upgraded_count"] > 0,
     }
     _merge_update_available("os", result)
     print(json.dumps(result))
@@ -544,7 +563,8 @@ def _cmd_os_apply_inner(status) -> None:
         recent_log = OS_UPDATE_LOG.read_text(encoding="utf-8", errors="replace")[-8000:]
     except OSError:
         recent_log = log_tail
-    upgraded_count, held_back = _parse_apt_upgrade_result(recent_log)
+    plan = _parse_apt_plan(recent_log)
+    upgraded_count, held_back = plan["upgraded_count"], plan["held_back"]
 
     if upgraded_count == 0 and held_back:
         names = ", ".join(held_back[:5]) + ("…" if len(held_back) > 5 else "")

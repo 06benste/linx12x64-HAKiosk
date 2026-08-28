@@ -1145,8 +1145,10 @@
         const data = await res.json();
         if (!res.ok || data.ok === false) throw new Error(data.error || "check failed");
         const count = data.upgradable_count || 0;
+        const heldBack = Array.isArray(data.held_back) ? data.held_back : [];
         osUpdateInfo.innerHTML = `
           <div class="primary"><span class="dot ${count > 0 ? "warn" : ""}"></span><span>${count > 0 ? count + " package" + (count === 1 ? "" : "s") + " available" : "Up to date"}</span></div>
+          ${heldBack.length ? `<div class="meta">${heldBack.length} held back (${escapeHtml(heldBack.join(", "))}) — needs more than a plain upgrade, not shown as available</div>` : ""}
         `;
         if (count > 0) {
           const pkgs = Array.isArray(data.packages) ? data.packages : [];
