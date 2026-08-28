@@ -1200,7 +1200,13 @@
               osRebootBanner.style.display = "block";
               btnOsUpdateReboot.style.display = "block";
             }
-            osUpdateCheckFn();
+            // Delayed, not immediate: osUpdateCheckFn() starts by blanking
+            // this exact status line ("Checking…"), which — called right
+            // here — wiped the "done" message before anyone could read it.
+            // That's what made a real, successful update (e.g. "4 upgraded,
+            // 1 held back") look like nothing happened and the button had
+            // just reset itself.
+            setTimeout(osUpdateCheckFn, 6000);
           } else if (state === "failed") {
             setStatus(osUpdateProgress, data.message || "Update failed", "bad");
             clearInterval(osUpdatePollTimer);
