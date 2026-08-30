@@ -3,15 +3,15 @@
 # sleep prevention, power drawer backend, charger fix, background daemons
 # (battery guard, guardian, auto-rotate, self-update, HDMI mirror), bounded
 # shutdown watchdog, and camera.
-# Usage: sudo bash scripts/install.sh ['http://homeassistant.local:8123/dashboard-kiosk']
+# Usage (as root — run 'su -' first): bash scripts/install.sh ['http://homeassistant.local:8123/dashboard-kiosk']
 # (URL is optional — omit it to get the on-tablet setup wizard on first boot.)
 #
 # Camera setup builds an out-of-tree kernel driver and needs network access.
-# Skip it with: SKIP_CAMERA=1 sudo bash install.sh
+# Skip it with: SKIP_CAMERA=1 bash install.sh
 set -euo pipefail
 
 if [[ $EUID -ne 0 ]]; then
-  echo "Run as root: sudo bash $0 ['http://homeassistant.local:8123/dashboard-kiosk']" >&2
+  echo "Run as root — run 'su -' first, then: bash $0 ['http://homeassistant.local:8123/dashboard-kiosk']" >&2
   exit 1
 fi
 
@@ -53,13 +53,13 @@ bash "$ROOT/12-shutdown-reliability.sh"
 echo
 if [[ -n "$SKIP_CAMERA" ]]; then
   echo "== 9/10: Camera — SKIPPED (SKIP_CAMERA set) =="
-  echo "Run it later with: sudo bash $ROOT/09-install-camera.sh"
+  echo "Run it later with: su -c 'bash $ROOT/09-install-camera.sh'"
 else
   echo "== 9/10: Camera =="
   echo "Building the kernel driver — needs network access, please wait."
-  bash "$ROOT/09-install-camera.sh" || echo "WARNING: camera setup failed — the rest of the kiosk is unaffected. Re-run: sudo bash $ROOT/09-install-camera.sh"
+  bash "$ROOT/09-install-camera.sh" || echo "WARNING: camera setup failed — the rest of the kiosk is unaffected. Re-run: su -c 'bash $ROOT/09-install-camera.sh'"
 fi
 
 echo
 echo "== 10/10: Done =="
-echo "All done. Reboot to start the kiosk: sudo reboot"
+echo "All done. Reboot to start the kiosk: reboot"
