@@ -45,13 +45,21 @@ A [Ventoy](https://www.ventoy.net/) USB stick carrying the official Debian netin
 | Prompt | Choice |
 |--------|--------|
 | Language / location | Your locale |
-| Hostname | `ha-kiosk` (or similar) |
+| Hostname | `hakiosk` (or similar) |
 | User | **`kioskuser`** (remember the password for SSH) |
 | Root password | Set one — required, since this guide uses `su -` for admin commands rather than `sudo` |
 | Network / Wi-Fi | Connect now if prompted (you can also do this after first boot with `nmtui`, or later from the tablet's own setup screen's Wi-Fi tab — see §5) |
 | Software selection (tasksel) | Uncheck ⬜ **Debian desktop environment** and every sub-item under it (GNOME, Xfce, KDE Plasma, Cinnamon, MATE, LXDE, LXQt — whichever are ticked by default) —  Uncheck ⬜ **web server** and ⬜ **print server** if either is ticked — nothing here serves or prints. Leave **SSH server** ✅ ticked — see "Is SSH required?" below. Leave **standard system utilities** ✅ ticked (default) — later scripts assume the usual base tools are present. | Use the space bar to check/uncheck items
-| Disk | Entire internal eMMC |
+| Disk | Guided partitioning — see steps below |
 | GRUB | Install to the tablet’s disk / EFI |
+
+### Partitioning
+
+1. **Guided — use entire disk**
+2. Select the internal **MMC/eMMC** disk (the only one listed on the tablet)
+3. **All files in one partition** (recommended for most users)
+4. **Finish partitioning and write changes to disk**
+5. Write the changes to disks? → **Yes**
 
 ### Is SSH required?
 
@@ -91,6 +99,8 @@ cd /mnt/usb/linx-ha-kiosk
 bash scripts/install.sh
 reboot
 ```
+
+![Terminal session: logging in, mounting the USB, and running install.sh](images/install%20shell.png)
 
 That one script sets up all tablet functionality and makes appropriate firmware fixes.
 
