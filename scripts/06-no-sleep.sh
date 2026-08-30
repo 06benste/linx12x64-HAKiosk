@@ -137,5 +137,3 @@ setterm -blank 0 -powerdown 0 -powersave off </dev/tty1 2>/dev/null || true
 echo
 echo "Sleep / blanking disabled."
 echo "Reboot recommended: reboot"
-echo
-echo "If the panel still dims under Cage/Chromium, say so — we can force DPMS off in the compositor too."
