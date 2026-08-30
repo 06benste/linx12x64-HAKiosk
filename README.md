@@ -4,41 +4,49 @@ Turn a wiped **Linx 12X64** (Atom x5-Z8350, 4GB) into a dedicated Home Assistant
 
 > **Transparency note:** Claude (Anthropic's AI) had a significant hand in developing this project — code, scripts, and docs alike. Every change was directed, reviewed, and extensively tested on real hardware by the maintainer; nothing here shipped unverified.
 
-## You do not need the old Windows drivers
+## What the tablet does
 
-This repo includes the Linx-specific Broadcom 43455 firmware (sourced from community Linx 12X64 archives):
-
-| File | Purpose |
-|------|---------|
-| `firmware/brcm/brcmfmac43455-sdio.txt` | NVRAM (from `4345r6nvram.txt`) |
-| `firmware/brcm/brcmfmac43455-sdio.clm_blob` | Country/locale blob |
-| `firmware/brcm/BCM4345C0_*.hcd` | Bluetooth firmware (optional) |
-| `firmware/61-sensor-local.hwdb` | Screen rotation sensor mapping |
+- **Full-screen Home Assistant dashboard** — Chromium in kiosk mode under `cage`, autologin, no desktop environment involved.
+- **On-tablet setup wizard** — configure the Home Assistant URL/login, Wi-Fi, MQTT, and cameras, either on first boot or any time after via the control drawer.
+- **On-screen control drawer** — brightness, day/night presets, blank/wake the screen, refresh or restart the dashboard, and jump back into setup, all without a keyboard or SSH.
+- **Auto-rotation** from the onboard accelerometer, or manual landscape/portrait/flip.
+- **Wake-on-touch** — any touch undoes an intentional screen blank.
+- **HDMI mirroring** — mirrors any connected HDMI output onto the tablet's own panel.
+- **MQTT device bridge** — publishes the tablet into Home Assistant as a device (battery, Wi-Fi, CPU/SoC temperature, uptime, disk/memory, etc. as diagnostic sensors) and exposes controls back the other way (brightness, night mode, blank/wake, refresh, restart, clear cache), plus an optional periodic dashboard screenshot published as a camera entity.
+- **Front/rear camera** *(alpha, power-hungry — recommended off)* — live preview, on/off toggle, and exposure/white-balance/contrast tuning from the setup screen.
+- **Power and thermal safety** — clean shutdown at 1% battery, low-battery display dimming, thermal camera cutoff, an AXP288 charging-current fix so it doesn't slowly discharge overnight while "plugged in", and a charge-LED toggle.
+- **Self-maintenance** — checks for and applies kiosk software and Debian package updates from the Updates tab, a self-test script, a shutdown watchdog, and a remote deploy tool for pushing code changes over SSH.
 
 ## What you need
 
-1. **USB Ethernet adapter** (strongly recommended for first boot) — tablet has full-size USB 3.0 + micro‑USB
-2. USB stick (≥8GB) for the Debian installer (see [docs/INSTALL.md §1](docs/INSTALL.md#1-prepare-the-installer-usb) for how to flash it with Ventoy). This uses the **official, unmodified Debian ISO** and **Ventoy fetched straight from its GitHub releases** — `tools/usb_installer_gui.py` downloads both directly from cdimage.debian.org and github.com/ventoy/Ventoy and verifies each against its publisher's own checksum, so you're never asked to trust a project-provided blob.
-3. Another PC to prepare that stick
-4. Your Home Assistant dashboard URL — you don't need this yet; the tablet will ask for it on first boot
+1. USB stick (≥8GB) for the installer
+3. A PC to prepare that stick
+4. Your Home Assistant setup
 
-## Quick path
+## Quick install path
 
-1. Follow [docs/INSTALL.md](docs/INSTALL.md) — flashing the USB, BIOS, 32‑bit EFI note, Debian install
-2. Copy this project onto the tablet (USB/microSD)
-3. Run:
-   ```bash
-   sudo bash scripts/install.sh
-   sudo reboot
-   ```
-   (one script — Wi‑Fi firmware, the kiosk, GPU stabilizers, sleep prevention, power-drawer backend, charger fix, battery/thermal safety daemons, and the front camera, all in one run. The camera step builds a kernel driver and needs network access; skip it with `SKIP_CAMERA=1 sudo bash scripts/install.sh` and run it later on its own)
-4. On first boot, finish setup on the tablet's touchscreen — enter your Home Assistant URL (and optional login), it restarts straight into your dashboard. See [docs/INSTALL.md §5](docs/INSTALL.md#5-first-boot--mount-the-usb-and-run-scripts).
-
-Deploying several tablets for one house and don't want to type the URL on each? Pass it directly: `sudo bash scripts/install.sh 'http://homeassistant.local:8123/dashboard-kiosk'` — see docs for pre-baking login credentials too.
+Follow [docs/INSTALL.md](docs/INSTALL.md)
 
 ## Stack
 
-- Debian 13 (Trixie) netinst (minimal / no desktop) — also on the Ventoy USB
+- Debian 13 (Trixie) netinst (minimal / no desktop) — 
 - `cage` (single-app Wayland compositor)
 - Chromium kiosk mode
 - Autologin on TTY1
+
+## Screenshots
+
+Screenshots of the additional tablet software and UI controls are below.
+
+| Home Assistant | Wi-Fi | MQTT |
+|---|---|---|
+| ![Home Assistant tab](docs/images/setup-ha.png) | ![Wi-Fi tab](docs/images/setup-wifi.png) | ![MQTT tab](docs/images/setup-mqtt.png) |
+
+| Cameras | General | Updates |
+|---|---|---|
+| ![Cameras tab](docs/images/setup-camera.png) | ![General tab](docs/images/setup-general.png) | ![Updates tab](docs/images/setup-updates.png) |
+
+A right-edge drawer (injected by the Chromium extension into the kiosk page) gives on-screen access to brightness, day/night dimming, screen blank/wake, dashboard refresh, and a shortcut back into the setup wizard — no keyboard or SSH needed:
+
+<img src="docs/images/power-drawer.png" alt="Tablet control drawer" width="360" />
+
